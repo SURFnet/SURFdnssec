@@ -1,0 +1,35 @@
+#!/usr/bin/env python
+#
+# ods-votes-test-send -- Send one or more test votes taken from sys.argv
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import sys
+
+import pika
+
+import rabbitdnssec
+
+
+
+if len (sys.argv) <= 1:
+	sys.stderr.write ('Usage: ' + sys.argv [0] + ' command to send\n')
+	sys.exit (1)
+
+command = ' '.join (sys.argv [1:])
+
+with rabbitdnssec.amqp_client_channel (
+			username='odsrpc',
+			transactional=True) as chan:
+	xchg = rabbitdnssec.my_exchange ()
+	print 'Sending', command, 'to', xchg
+	chan.basic_publish (
+			exchange=xchg,
+			routing_key='key_ops',
+			body=command)
+	frame_method = chan.tx_commit ()
+	txfail = type (frame_method.method) != pika.spec.Tx.CommitOk
+	if txfail:
+		print 'Failed to commit collective test send to', xchg
+

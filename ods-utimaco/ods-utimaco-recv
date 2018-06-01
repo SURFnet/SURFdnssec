@@ -1,0 +1,81 @@
+#!/usr/bin/env python
+#
+# ods-utimaco-recv -- Receive external keys of an Utimaco HSM & integrate
+#
+# This program takes delivery of an Utimaco External Keys dump file over
+# AMQP, and integrates them through external key recovery.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import sys
+import time
+import socket
+import ssl
+
+import pika
+
+import rabbitdnssec
+
+
+pkcs11_routing_keys = [ 'pkcs11_backup', 'pkcs11_extend' ]
+
+cfg = rabbitdnssec.my_config ('ods-utimaco')
+pkcs11_restorefile = cfg ['pkcs11_restorefile']
+username           = cfg ['username']
+
+pkcs11_pinfile = rabbitdnssec.pkcs11_pinfile ()
+exchangename   = rabbitdnssec.my_exchange ()
+queuename      = rabbitdnssec.my_queue ('pkcs11_extend')
+
+signer_machine = socket.gethostname ().split ('.') [0]
+
+
+def process_msg (chan, mth, props, body):
+	who = props.cluster_id or 'signer_cluster'
+	outfh = open (pkcs11_restorefile, 'w')
+	outfh.write (body)
+	outfh.close ()
+	if os.system ('p11tool2 LoginUser=`cat ' + pkcs11_pinfile + '` RestoreExternalKeys=' + pkcs11_restorefile) != 0:
+		print 'Failure during restore of external keys from', who
+		chan.basic_nack (delivery_tag=mth.delivery_tag, requeue=False)
+		chan.tx_rollback ()
+	else:
+		print 'Successfully restored external keys from', who
+		chan.basic_ack  (delivery_tag=mth.delivery_tag)
+		chan.tx_commit ()
+		#TODO# Possibly process failed transaction?
+
+
+creds   = rabbitdnssec.my_credentials (ovr_appname='ods-utimaco')
+cnxparm = rabbitdnssec.my_connectionparameters (creds)
+props   = rabbitdnssec.my_basicproperties (ovr_username='pkcs11update')
+
+print 'Connection parameters:', cnxparm
+cnx = None
+chan = None
+try:
+	cnx = pika.BlockingConnection (cnxparm)
+	chan = cnx.channel ()
+	chan.basic_consume (process_msg, queue=queuename)
+	print 'Starting transaction'
+	chan.tx_select ()
+	print 'Basically consuming!'
+	chan.start_consuming ()
+	print 'Done consuming; committing transaction'
+except pika.exceptions.AMQPChannelError, e:
+	print 'AMQP Channel Error:', e
+	sys.exit (1)
+except pika.exceptions.AMQPError, e:
+	print 'AMQP Error:', e
+	sys.exit (1)
+finally:
+	if chan is not None:
+		chan.tx_rollback ()
+		chan = None
+	if cnx is not None:
+		cnx.close ()
+	cnx = None
+
+sys.exit (0)

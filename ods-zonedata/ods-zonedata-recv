@@ -1,0 +1,122 @@
+#!/usr/bin/env python
+#
+# ods-zonedata-recv -- Receive from the zonedata queue, finding empty to delete
+#
+# This program takes delivery of complete zone files in a queue named
+# $HOST_zonedata and stores it in the filesystem through a backend that
+# depends on the locally used DNSSEC signing software.
+#
+# When the received zone data is an empty string, then the reverse will be
+# done, to clean up after the zone.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import sys
+import time
+import socket
+import ssl
+
+import pika
+
+import rabbitdnssec
+
+
+# Setup from configuration variables
+#
+queuename               = rabbitdnssec.my_queue ('zonedata')
+singer_exchange_name    = rabbitdnssec.my_exchange ()
+parenting_exchange_name = rabbitdnssec.my_exchange ('parenting')
+backend                 = rabbitdnssec.my_backend ()
+backendmod              = rabbitdnssec.my_backendmod ('ods-zonedata-recv-')
+
+
+
+def try_unlink (path):
+	try:
+		os.unlink (path)
+	except:
+		pass
+
+def process_msg (chan, mth, props, body):
+	zone = '<unavailable>'
+	ok = True
+	try:
+		print 'Fetching subject from', props.headers
+		zone = props.headers ['subject']
+		print 'Fetched  subject', zone
+		if body == '':
+			print 'Removing zonedata and zonelist entry for', zone
+			# remove zonelist entry
+			backendmod.delzone (zone)
+			#TODO# DEPRECATED -- # stop signing the zone
+			#TODO# DEPRECATED -- os.system ('ods-signer clear ' + zone)
+			# remove the zone data files
+			try_unlink ('/var/opendnssec/unsigned/' + zone + '.txt')
+			try_unlink ('/var/opendnssec/uploaded/' + zone + '.txt')
+		else:
+			# save body to new zonefile -- but not in unsigned yet
+			zf = open ('/var/opendnssec/uploaded/' + zone + '.new', 'w')
+			zf.write (body)
+			zf.close ()
+			# atomically replace the zonefile in uploaded
+			os.rename ('/var/opendnssec/uploaded/' + zone + '.new',
+			           '/var/opendnssec/uploaded/' + zone + '.txt')
+			# have zonelist entry
+			print 'Having zonedata and zonelist entry for', zone
+			backendmod.addzone (zone)
+			#TODO# DEPRECATED -- generate composite zone by adding parenting data
+			#TODO# DEPRECATED -- os.system ('ods-zonedata-unsigned ' + zone)
+			#TODO# DEPRECATED -- instead send a message to the parenting exchange
+			# generate composite zone by hinting the parenting exchange
+		print 'DEBUG: Hinting parenting exchange about', zone
+		chan.basic_publish (exchange=parenting_exchange_name,
+					routing_key='',
+					body=zone)
+		# Update .signconf, creating or deleting as per zonelist.xml
+		if backend == 'opendnssec':
+			os.system ('./ods-zonedata-signconf ' + zone)
+	except Exception, e:
+		print 'Exception:', e, 'for zone', zone
+		ok = False
+	if not ok:
+		print 'Failure while processing zonedata for ' + zone
+		chan.basic_nack (delivery_tag=mth.delivery_tag, requeue=False)
+		chan.tx_rollback ()
+	else:
+		print 'Successfully processed zonedata update' #TODO#ZONE#
+		chan.basic_ack  (delivery_tag=mth.delivery_tag)
+		chan.tx_commit ()
+		#TODO# signal parent/child system about updated zonedata
+
+creds = rabbitdnssec.my_credentials ()
+cnxparm = rabbitdnssec.my_connectionparameters (creds)
+
+print 'Connection parameters:', cnxparm
+cnx = None
+chan = None
+try:
+	cnx = pika.BlockingConnection (cnxparm)
+	chan = cnx.channel ()
+	chan.basic_consume (process_msg, queue=queuename)
+	print 'Starting transaction'
+	chan.tx_select ()
+	print 'Basically consuming!'
+	chan.start_consuming ()
+	print 'Done consuming; committing transaction'
+except pika.exceptions.AMQPChannelError, e:
+	print 'AMQP Channel Error:', e
+	sys.exit (1)
+except pika.exceptions.AMQPError, e:
+	print 'AMQP Error:', e
+	sys.exit (1)
+finally:
+	if chan is not None:
+		chan.tx_rollback ()
+		chan = None
+	if cnx is not None:
+		cnx.close ()
+	cnx = None
+
+sys.exit (0)

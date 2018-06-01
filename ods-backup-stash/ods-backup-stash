@@ -1,0 +1,139 @@
+#!/usr/bin/env python
+#
+# ods-backup-stash -- Pull backup files and store them
+#
+# This program is used to retrieve backups written to a RabbitMQ queue.
+# It is entirely possible to store such backups on a cluster, so as to
+# have more certainty of recovery; to ods-backup-stash, this is immaterial.
+# All it wants to do is connect to a RabbitMQ node and listen to incoming
+# backups to stash.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import time
+import socket
+import ssl
+
+import pika
+
+import rabbitdnssec
+
+
+cfg_pkcs11 = rabbitdnssec.my_config ('pkcs11')
+cfg_rabbit = rabbitdnssec.my_config ('rabbitmq')
+
+backupdir       =      cfg_pkcs11 ['backup_dir']
+signer_machines =      cfg_rabbit ['signer_machines'].split ()
+host            =      cfg_rabbit ['host']
+port            = int (cfg_rabbit ['port'])
+
+queuenames = [ signer + '_pkcs11_backup' for signer in signer_machines ]
+
+print 'Queue names backed up from:', queuenames
+
+
+# The exitasap variable is set after an async exit request has fired
+exitasap = False
+
+
+#
+# Setup the credentials object for the given username and password
+creds = rabbitdnssec.my_credentials (ovr_username='backup')
+
+
+#
+# Process a single message, that is a backup token to be stashed
+def process_msg (chan, method, props, body):
+	global backupdir
+	when = props.timestamp or time.time ()
+	when = time.gmtime (when)
+	when = time.strftime ('%Y%m%d-%H%M%S', when)
+	who  = props.cluster_id or 'signer-cluster'
+	what = body
+	flnm = backupdir + os.sep + who + '-' + when + '.keys'
+	print 'Writing message of', len (body), 'bytes to', flnm
+	outfh = open (flnm, 'w')
+	outfh.write (what)
+	outfh.close ()
+	chan.basic_ack (delivery_tag=method.delivery_tag)
+
+
+#
+# Try to deliver service, returning True if we subscribed
+def try_stash (sockaddr):
+	global queuenames, creds
+	sth_done = False
+	def invoke_process_msg (chan, method, props, body):
+		global sth_done
+		sth_done = True
+		return process_msg (chan, method, props, body)
+	cnxparm = rabbitdnssec.my_connectionparameters (creds)
+	print 'Connection parameters:', cnxparm
+	cnx = None
+	try:
+		cnx = pika.BlockingConnection (cnxparm)
+		print 'Blocking connection:', cnx
+		chan = cnx.channel ()
+		print 'Channel:', chan
+		for qnm in queuenames:
+			chan.basic_consume (invoke_process_msg, queue=qnm)
+		print 'Basically consuming!'
+		chan.start_consuming ()
+		print 'Stopped to start consuming  :)'
+	except pika.exceptions.AMQPChannelError, e:
+		print 'AMQP Channel Error:', e
+		sth_done = True
+	except pika.exceptions.AMQPError, e:
+		print 'AMQP Error:', e, '::', type (e)
+		pass
+	finally:
+		if cnx is not None:
+			try:
+				cnx.close ()
+			except:
+				# shrug
+				pass
+		cnx = None
+	return sth_done
+
+
+#
+# Iterate over host addresses, trying to connect
+def listenloop ():
+	global host, port, exitasap
+	done_sth = False
+	print 'HOST =',host, ' / PORT =', port
+	hostaddrs = socket.getaddrinfo (host, port)
+	print 'Trying addresses:', hostaddrs
+	for hostaddr in hostaddrs:
+		if exitasap:
+			return done_sth
+		(fam, typ, pro, can, adr) = hostaddr
+		print 'Trying to listen to', adr
+		if try_stash (adr):
+			done_sth = True
+	return done_sth
+
+#
+# Iterate forever, using exponential fallback to releave the network
+def mainloop ():
+	global exitasap
+	fallback = 5
+	while not exitasap:
+		done_sth = listenloop ()
+		if done_sth:
+			print 'Disconnect from server.  Reconnecting.'
+			fallback = 5
+		else:
+			print 'Connection failed on all ports.  Sleeping.'
+			time.sleep (fallback)
+			fallback = fallback * 2
+			if fallback > 3600:
+				fallback = 3600
+			print 'Woken up.  Reconnecting.'
+
+#
+# Run the main loop
+mainloop ()

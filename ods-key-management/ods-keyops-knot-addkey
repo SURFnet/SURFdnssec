@@ -1,0 +1,77 @@
+#!/usr/bin/python
+#
+# Knot-specific key generator in PKCS #11
+# using the "keymgr" utility.  See its help
+# output for operational controls.
+#
+# Note that keymgr permits keys to be generated
+# before a zone is known to Knot DNS.
+#
+# This process has interactions with ods-zonedata-recv-knot.py
+# to add and remove zone data orthogonally, in spite of
+# Knot DNS resisting such an approach.  The opposite of this
+# file's operation is found in ods-votes-knot-delkey.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import sys
+
+import rabbitdnssec
+
+
+
+# Determine the signing algorithm to use for newly added keys
+curve_name = rabbitdnssec.my_config ('pkcs11') ['curve_name']
+if curve_name == 'P-256':
+	alg = 'ECDSAP256SHA256'
+else:
+	raise NotImplementedError (sys.argv [0] + ' got a request for an unsupported curve: ' + curve_name)
+
+
+# Parse cmdline args
+if len (sys.argv) < 2:
+	sys.stderr.write ('Usage: ' + sys.argv [0] + ' zone...\n')
+	sys.exit (1)
+zones = sys.argv [1:]
+
+
+def dnssec_enable (zone):
+	# Ensure that a zone is served, with DNSSEC, by Knot DNS.
+	# Note: Zone data is supplied orthogonally; when no zone file
+	# exists there may be complaints from Knot DNS but it should
+	# continue to function for all other zones.
+	#
+	# Note: This procedure is idempotent, key additions are neutral
+	# for already-existing zones.
+	#
+	rv0 = os.system ('knotc conf-begin')
+	rv1 = 0
+	rv2 = 0
+	if rv0==0:
+		os.system ('knotc conf-set zone.domain "' + zone + '"')
+		# Ignore the result; the zone may already exist; check that
+		rv1 = os.system ('knotc conf-get "zone[' + zone + ']"')
+	if rv0==0 and rv1==0:
+		rv2 = os.system ('knotc conf-set "zone[' + zone + '].dnssec-signing" on')
+	if rv0==0 and rv1==0 and rv2==0:
+		os.system ('knotc conf-commit')
+	else:
+		if rv0==0:
+			os.system ('knotc conf-abort')
+		#TODO# Report that Knot DNS could not enable DNSSEC
+		print 'TODO: ERROR: Knot DNS could not enable DNSSEC for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2)
+
+
+# Generate keys
+for zone in zones:
+	rv0 = os.system ('keymgr "' + zone + '" generate algorithm="' + alg + '" ksk=yes zsk=yes')
+	rv1 = 0
+	rv2 = 0
+	if rv0 != 0:
+		#TODO# Log error
+		print 'TODO: ERROR: Failed to generate key for for zone=' + zone + ' alg=' + alg
+	if rv0==0:
+		dnssec_enable (zone)
+

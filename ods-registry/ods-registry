@@ -1,0 +1,618 @@
+#!/usr/bin/python
+#
+# parental_control.py -- Control the KSK set registared with the parent.
+#
+# WARNING: Hardcoded support for the .NL registry --and only that one-- present
+#
+# Note: The #DIRECT# markings indicate a choice to permit only _direct_
+# parents to be supported for DS "uploads" to parents running locally.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import sys
+import time
+import string
+import syslog
+import fcntl
+
+from dns import name, rrset, resolver, rdataclass, rdatatype, dnssec, exception
+
+from importlib import import_module
+
+import rabbitdnssec
+
+import rabbitdnssec
+
+
+#
+# Load configuration data
+#
+cfg_registry  = rabbitdnssec.my_config ('ods-registry')
+cfg_parenting = rabbitdnssec.my_config ('ods-parenting')
+cfg_rpc       = rabbitdnssec.my_config ('ods-rpc')
+
+
+#
+# The /var subdirectory for parenting control
+#
+vardir = cfg_parenting ['parenting_dir']
+
+
+#
+# The /var subdirectory for ods-rpc flags (notably, *.chaining)
+#
+rpcdir = cfg_rpc ['rpc_dir']
+
+
+#
+# Location of the NS holding the signed output
+#
+signer_ns_name = cfg_parenting ['signer_ns']
+
+
+#
+# The (presumably fixed) TTL for the DS of each parent/TLD
+#
+parent2dsttl = { }
+for (k,v) in cfg_parenting:
+	if k [:6] == 'dsttl_':
+		parent2dsttl [k [6:]] = int (v)
+
+#
+# The TTL for the DS if a parent zone is present locally
+#
+localdsttl = cfg_parenting ['local_dsttl']
+
+#
+# The DS algorithms.  Look into dnspython's dnssec.make_ds source for values.
+#
+dsalgset = set (cfg_parenting ['hashalgs'].split ())
+
+
+#
+# The levels of the control process, or stable inter-step states:
+# Note: If you changed this, you would draw attention to assertions below.
+#
+levels = [ '0signer', '1author', '2mature', '3parent', '4public', '5dshold', '6dsseen' ]
+
+
+#
+# Not available in dnspython: digest code to string (but string is needed)
+# Source: http://www.iana.org/assignments/ds-rr-types/ds-rr-types.xml
+#
+digesttype_map = [ None, 'SHA1', 'SHA256', 'GOST R 34.11-94', 'SHA384' ]
+
+
+#
+# The filename for locking of this script, to avoid modifying files in parallel
+#
+ods_registry_lock_filename = cfg_registry ['lockfile']
+
+
+#
+# The signer backend
+#
+signermod = my_backendmod ('ods-registry-')
+
+
+#
+# Open the syslog
+#
+#TODO# Move this into rabbitdnssec
+#
+syslog.openlog ('ods-registry', syslog.LOG_PERROR if sys.stderr.isatty () else 0, syslog.LOG_USER)
+
+
+
+
+#
+# Setup the default resolver
+#
+default_ns = resolver.get_default_resolver ()
+default_ns.use_edns (0, 0, 4096)
+
+
+#
+# Setup the default authoritative (to use when resolving my our own zones)
+# Note: This is purely for the testing environment, where nstest hosts
+# zones but they do not reach the live resolver.
+#
+auth_ns_opt = cfg.get ('auth_ns')
+if auth_ns_opt:
+	default_auth_ns = resolver.Resolver (configure=False)
+	default_auth_ns.nameservers.append (auth_ns_opt) # + default_ns.nameservers [:]
+	default_auth_ns.use_edns (0, 0, 4096)
+else:
+	default_auth_ns = default_ns
+
+
+#
+# Create a handle for the resolver holding ODS output
+#
+signer_ns = resolver.Resolver (signer_ns_name)
+signer_ns.use_edns (0, 0, 4096)
+
+
+#
+# Write the RRsets for a given level of a given zone to file.
+#
+def write_keyset (zone, lvl, rrset):
+	print 'Writing keyset with', len (rrset), 'elements'
+	fn = vardir + zone + '.' + lvl
+	fh = open (fn, 'w')
+	fh.write (str (rrset.ttl) + '\n')
+	for rr in rrset:
+		fh.write (rr.to_text () + '\n')
+	fh.close ()
+
+
+#
+# Read the RRsets for all levels for a zone, return as a dictionary.
+#
+def read_keysets_and_ages (zone):
+	znm = name.from_text (zone)
+	sets = { }
+	ages = { }
+	for lvl in levels:
+		try:
+			fn = vardir + zone + '.' + lvl
+			st = os.stat (fn)
+			ages [lvl] = st.st_mtime
+			fh = open (fn, 'r')
+			txt = map (string.rstrip, fh.readlines ())
+			fh.close ()
+			ttl = int (txt [0])
+			sets [lvl] = rrset.from_text_list (znm, ttl, rdataclass.IN, rdatatype.DNSKEY, txt [1:])
+		except OSError, e:
+			sets [lvl] = rrset.RRset (zone, rdataclass.IN, rdatatype.DNSKEY)
+			ages [lvl] = 0
+			print 'Reading error:', e
+	return (sets, ages)
+
+
+#
+# Retrieve the signer's DNSKEYs (with SEP bit set) for a given zone
+#
+def fetch_authoritative_keyset (authns, zone):
+	znm = name.from_text (zone)
+	keys = authns.query (znm, rdtype=rdatatype.DNSKEY).rrset
+	print 'Fetched', len (keys), 'dnskeys'
+	for idx in range (len (keys) -1, -1, -1):
+		print 'Flags at', idx, 'set to', keys [idx].flags
+		if keys [idx].flags & 0x0001 == 0x0000:
+			del keys [idx]
+		print 'Still got', len (keys), 'dnskeys'
+	return keys
+
+#
+# Retrieve the signer's DNSKEYs for a given zone *if* rpc signals "chaining"
+# This replaces the routine before, making parenting driven by the flag that
+# is set by chain_start and stopped by chain_stop in the ods-rpc toolkit.
+#
+def fetch_authoritative_keyset_when_chaining (authns, zone):
+	if os.access (rpcdir + os.sep + zone + '.chaining', os.R_OK):
+		retval = fetch_authoritative_keyset (authns, zone)
+	else:
+		# "Fake" an empty RRset with 0 DNSKEYs
+		retval = rrset.RRset (zone, rdataclass.IN, rdatatype.DNSKEY)
+	return retval
+
+#
+# Retrieve the signer's DNSKEYs (with SETP bit set) for a given zone
+#
+def fetch_authoritative_dsset (authns, zone):
+	znm = name.from_text (zone)
+	dss = authns.query (znm, rdtype=rdatatype.DS).rrset
+	print 'Fetched', len (dss), 'ds\'s'
+	return dss
+
+
+#
+# See if two DNSKEY sets are equal (used here to compare KSK sets)
+#
+def same_keysets (keys1, keys2):
+	# This should work... but dnspython is too shaky to trust
+	# that without wrapping for future maintenance...
+	print 'Key set 1:', keys1 if len (keys1) > 0 else '(empty)'
+	print 'Key set 2:', keys2 if len (keys2) > 0 else '(empty)'
+	if len (keys1) == 0 and len (keys2) == 0:
+		print 'Equality bypassed: True'
+		return True
+	print 'Equality:', keys1 == keys2
+	return keys1 == keys2
+
+
+#
+# See if a DS set describes a DNSKEY set, selecting based on SEP bit
+#
+def ds_matches_keyset (zone, dsset, keyset):
+	znm = name.from_text (zone).parent ()
+	halg = set ()
+	ds1 = set ()
+	for ds in dsset:
+		ds1.add ( (ds.digest_type, ds) )
+		halg.add (ds.digest_type)
+	ds2 = set ()
+        for key in keyset:
+                if key.flags & 0x0001:
+                        for alg in halg:
+                                derived_ds = dnssec.make_ds (zone + '.', key, digesttype_map [alg])
+                                ds2.add ( (alg, derived_ds) )
+
+	print 'DSset 1:', ds1
+	for ds in ds1:
+		print ' - holds type:', type (ds)
+	print 'DSset 2:', ds2
+	for ds in ds1:
+		print ' - holds type:', type (ds)
+	print 'Equality:', ds1 == ds2
+	return ds1 == ds2
+
+
+#
+# Step functions.  Each returns True if the step may be made,
+# because at theat time, the idempotent change required as a
+# precondition for thep rocess sstep has been fulfilled.
+#
+
+
+def step_to_0signer (zone, parent, prepkeys, prepage, nextkeys):
+	# Always permit this step, as the signer output is always welcome
+	print 'step_to_0signer for', zone
+	return True
+
+
+def step_to_1author (zone, parent, prepkeys, prepage, nextkeys):
+	# Permit this step if all zone authoritatives agree on the keyset
+	print 'step_to_1author for', zone
+	znm = name.from_text (zone)
+	try:
+		nsset = default_auth_ns.query (znm, rdtype=rdatatype.NS).rrset
+	except resolver.NXDOMAIN:
+		syslog.syslog (syslog.LOG_CRIT, 'No authoritative name servers found for ' + zone)
+		return False
+	except Exception, e:
+		syslog.syslog (syslog.LOG_ERR, 'Exception during query ' + zone + ' NS: ' + str (e) + ':' + str (type (e)))
+		return False
+	for authns in nsset:
+		authns_name = name.from_text (authns.to_text ())
+		print 'Will now build resolver for authns', authns_name
+		authres = resolver.Resolver (configure=False)
+		authres.use_edns (0, 0, 4096)
+		try:
+			for address in default_ns.query (authns_name, rdtype=rdatatype.AAAA):
+				print 'Adding resolver address', address.to_text ()
+				authres.nameservers.append (address.to_text ())
+		except:
+			pass
+		try:
+			for address in default_ns.query (authns_name, rdtype=rdatatype.A):
+				print 'Adding resolver address', address.to_text ()
+				authres.nameservers.append (address.to_text ())
+		except:
+			pass
+		print 'Resolver now has name server addresses', authres.nameservers
+		try:
+			authkeys = fetch_authoritative_keyset_when_chaining (authres, zone)
+			if not same_keysets (authkeys, prepkeys):
+				return False
+		except resolver.NXDOMAIN:
+			syslog.syslog (syslog.LOG_CRIT, 'Authoritative name server does not provide for ' + zone)
+			return False
+		except resolver.NoAnswer:
+			syslog.syslog (syslog.LOG_ERR, 'No answer from parent name server on ' + zone + ' DNSKEY')
+			return False
+		except Exception, e:
+			syslog.syslog (syslog.LOG_ERR, 'Exception during query ' + zone + ' DNSKEY: ' + str (e) + ':' + str (type (e)))
+			return False
+	return True
+
+
+def step_to_2mature (zone, parent, prepkeys, prepage, nextkeys):
+	# Permit this step after the keys have matured for TTL + 1h safety margin
+	print 'step_to_2mature for', zone
+	print 'Judging based on TTL', prepkeys.ttl, 'plus preparation age', prepage, 'plus 1 hour falls before now,', time.time ()
+	threshold_time = prepage + prepkeys.ttl + 3600
+	return time.time () > threshold_time
+
+def step_to_3parent (zone, parent, prepkeys, prepage, nextkeys):
+	# Permit this step when the parent has been upgraded over EPP
+	print 'step_to_3parent for', zone, 'under parent', parent
+	success = False
+	znm = name.from_text (zone)
+	global registries
+	if registries.has_key (parent):
+		(regmod,regcnx) = registries [parent]
+	else:
+		(regmod,regcnx) = registries [None]
+	if regcnx is None:
+		cnx = regmod.connect ()
+		registries [parent] = (regmod, regcnx)
+	#NONESTLOCK# lockf = open (registry_lock_filename, 'w')
+	try:
+		#NONESTLOCK# if fcntl.flock (lockf, fcntl.LOCK_EX | fcntl.LOCK_NB) == -1:
+		#NONESTLOCK# 	syslog.syslog (syslog.LOG_CRIT, 'Failed to lock parenting process')
+		#NONESTLOCK# 	sys.exit (1)
+		regmod.update_keys (cnx, znm, prepkeys)
+		success = True
+	except Exception, e:
+		syslog.syslog (syslog.LOG_CRIT, 'Registry raised an exception while changing keyset: ' + str (e))
+		success = False
+	finally:
+		#NONESTLOCK# os.unlink (registry_lock_filename)
+		#NONESTLOCK# lockf.close ()
+		pass
+	return success
+
+def step_to_4public (zone, parent, prepkeys, prepage, nextkeys):
+	# Permit this step if all parent authoritatives agree on the keyset
+	print 'step_to_4public for', zone
+	znm = name.from_text (parent)
+	try:
+		print 'Querying NS:', default_auth_ns.nameservers
+		nsset = default_auth_ns.query (znm, rdtype=rdatatype.NS).rrset
+	except resolver.NXDOMAIN:
+		syslog.syslog (syslog.LOG_CRIT, 'No authoritative name servers found for ' + zone)
+		return False
+	except Exception, e:
+		syslog.syslog (syslog.LOG_ERR, 'Exception during query ' + zone + ' NS: ' + str (e) + ':' + str (type (e)))
+		return False
+	for authns in nsset:
+		authns_name = name.from_text (authns.to_text ())
+		print 'Will now build parent resolver for authns', authns_name
+		authres = resolver.Resolver (configure=False)
+		authres.use_edns (0, 0, 4096)
+		try:
+			for address in default_ns.query (authns_name, rdtype=rdatatype.AAAA):
+				print 'Adding parent resolver address', address.to_text ()
+				authres.nameservers.append (address.to_text ())
+		except:
+			pass
+		try:
+			for address in default_ns.query (authns_name, rdtype=rdatatype.A):
+				print 'Adding parent resolver address', address.to_text ()
+				authres.nameservers.append (address.to_text ())
+		except:
+			pass
+		print 'Parent resolver now has name server addresses', authres.nameservers
+		try:
+			authdsset = fetch_authoritative_dsset (authres, zone)
+			if not ds_matches_keyset (zone, authdsset, prepkeys):
+				return False
+		except resolver.NXDOMAIN:
+			syslog.syslog (syslog.LOG_CRIT, 'Authoritative parent name server does not provide for ' + zone)
+			return False
+		except resolver.NoAnswer:
+			syslog.syslog (syslog.LOG_ERR, 'No answer from parent name server on ' + zone + ' DS')
+			return False
+		except Exception, e:
+			syslog.syslog (syslog.LOG_ERR, 'Exception during parent query ' + zone + ' DS: ' + str (e) + ':' + str (type (e)))
+			return False
+	return True
+
+def step_to_5dshold (zone, parent, prepkeys, prepage, nextkeys):
+	# Permit this step after the keys have matured for TTL
+	print 'step_to_5dshold for', zone
+        if zone [-1:] == '.':
+                zone = zone [:-1]
+        tld = zone.split ('.')[-1]
+        if not parent2dsttl.has_key (parent):
+                syslog.syslog (syslog.LOG_WARNING, 'Failed to wait DS TTL for TLD of ' + zone)
+                return
+	print 'Judging based on TTL', prepkeys.ttl, 'plus preparation age', prepage, 'falls before now,', time.time ()
+	threshold_time = prepage + parent2dsttl [parent]
+	return time.time () > threshold_time
+	return False
+
+def step_to_6dsseen (zone, parent, prepkeys, prepage, nextkeys):
+	# Permit this step after OpenDNSSEC has been upgraded with ds-seen / ds-unseen
+	print 'step_to_6dsseen for', zone
+	for key in prepkeys:
+		if not key in nextkeys:
+			kid = dnssec.key_id (key)
+			print 'Key identity is', kid
+			exitcode = signermod.seen_ds (zone, kid)
+			if exitcode != 0:
+				syslog.syslog (syslog.LOG_CRIT, 'Failure to signal ds-seen on zone ' + zone + ' key tag ' + str (kid))
+				syslog.syslog (syslog.LOG_CRIT, 'Since ds-seen is not idempotent, problems may be sticky')
+				return False
+	for key in nextkeys:
+		if not key in prepkeys:
+			kid = dnssec.key_id (key)
+			#TODO# trigger ds-unseen on OpenDNSSEC 2.0
+	return True
+
+
+
+#
+# Find functions to step up to a given level
+#
+step_functions = [ step_to_0signer, step_to_1author, step_to_2mature, step_to_3parent, step_to_4public, step_to_5dshold, step_to_6dsseen ]
+step_levels = []
+for fun in step_functions:
+	# Ensure the expected function naming pattern
+	assert fun.__name__ [:8] == 'step_to_'
+	step_levels.append (fun.__name__ [8:])
+# Ensure that the levels have not changed, so the function list is actually correct
+assert levels == step_levels
+
+
+
+#
+# Pass over all steps for a given zone
+#
+def process_zone (zone):
+	#
+	# Return a series of directory entries for given levels
+	#
+	def leveldir2levellist (ldir):
+		llist = []
+		for lvl in levels:
+			llist.append (ldir [lvl])
+		return llist
+
+	if zone [-1:] == '.':
+		zone = zone [:-1]
+	parent = None
+	#DIRECT# for splitpoint in range (zone.count ('.')):
+	for splitpoint in [0]:
+		possibleparent = zone.split ('.', 1+splitpoint) [-1]
+		if parent2dsttl.has_key (possibleparent):
+			parent = possibleparent
+			break
+	#DIRECT#BEGIN#
+	if len (zone.split ('.')) != 2 and not parent:
+		syslog.syslog (syslog.LOG_ERR, 'Only #DIRECT# local parents supported, skipping DS setup for ' + zone)
+		return
+	#DIRECT#END#
+	if not parent:
+		print 'Only the NL registry and local parents supported, skipping ' + zone
+		return
+	try:
+		signer_keys = fetch_authoritative_keyset_when_chaining (signer_ns, zone)
+	except exception.DNSException, de:
+		syslog.syslog (syslog.LOG_ERR, 'Authoritative name server for ' + zone + ' not published by signer NS: ' + str (de))
+		return
+	(keys, ages) = read_keysets_and_ages (zone)
+	prepkeys = [signer_keys] + leveldir2levellist (keys) [:-1]
+	prepages = [0]           + leveldir2levellist (ages) [:-1]
+	nextkeys =                 leveldir2levellist (keys)
+	print 'Lengths:', len (levels), len (prepkeys), len (prepages), len (nextkeys), len (step_functions)
+	# Ensure that all sets input to the zip are of the same length
+	assert 1 == len (set (map (len, [levels, prepkeys, prepages, nextkeys, step_functions])))
+	push_prep = None
+	for (nxtlvl,prep,age,next,step) in zip (levels, prepkeys, prepages, nextkeys, step_functions):
+		if push_prep:
+			prep = push_prep
+			push_prep = None
+			age = time.time ()
+			print 'Using pushed value for prep, with its age to the current time' 
+		if not same_keysets (prep, next):
+			if step (zone, parent, prep, age, next):
+				syslog.syslog (syslog.LOG_INFO, 'Upgrading KSK keyset for %s to state %s' % (zone, nxtlvl))
+				write_keyset (zone, nxtlvl, prep)
+				push_prep = prep
+
+
+
+#
+# One pass over the work as it currently exists
+#
+def onepass ():
+	#
+	# Load the work set, so the set of zone names, from the signer backend
+	workset = set (signermod.zonenames ())
+	for work in workset:
+		parent2dsttl [work] = localdsttl
+	#
+	# Process the collected zones
+	for work in workset:
+		print
+		print 'Working on zone', work
+		process_zone (work)
+	#
+	# Remove zones that were administered, but
+	# that have now been removed from the zone list.
+	#
+	# The assumption made here is that we should
+	# immediately let go when a zone has disappeared
+	# from the list maintained by the signer.  It will
+	# usually be caused by moving a domain to another
+	# signing location, or by stopping to sign it.
+	#
+	# A more complete solution would encompass the
+	# retraction of keys until the key set is empty.
+	# Alas, OpenDNSSEC 1.x does not support empty
+	# key sets annex the null signing algorithm.
+	#
+	# This may mean that zone removal incurs manual
+	# labour on OpenDNSSEC 1.x
+	#
+	toberemoved = set ()
+	for z in os.listdir (vardir):
+		zone = z.rsplit ('.', 1) [0]
+		if not zone in workset:
+			toberemoved.add (zone)
+	for z in toberemoved:
+		syslog.syslog (syslog.LOG_INFO, 'Attempting once to remove DS records for ' + z)
+		try:
+			parent = z.split ('.', 1) [-1]
+			step_to_3parent (z, parent, set (), None, None)
+			syslog.syslog (syslog.LOG_INFO, 'No more DS records should be registered in the parent of ' + z)
+		except Exception, e:
+			# Maybe we're not in control anymore.  Let go but not without a cry.
+			syslog.syslog (syslog.LOG_ERR, 'Failed to remove DS from the parent of ' + z + ': ' + str (e))
+	for z in toberemoved:
+		for lvl in levels:
+			try:
+				os.unlink (vardir + os.sep + z + '.' + lvl)
+			except Exception, e:
+				# Maybe the files don't exist.  Leggo.
+				pass
+
+
+#
+# Main program -- iterate over all zones in the zone list
+# and handle each individually.
+#
+if __name__ == '__main__':
+	#
+	# Fork as a daemon to the background
+	pid = os.fork ()
+	if pid > 0:
+		print 'Forked backgroun daemon to', sys.argv [0], 'in PID', pid
+		sys.exit (0)
+	os.setsid ()
+	os.close (0)
+	#TODO#print# os.close (1)
+	os.close (2)
+	#ITSOK# raise Exception ('You should not run this on a test zone list!')
+	lockf = open (ods_registry_lock_filename, 'w')
+	#DEBUG# print 'Preparing to lock', ods_registry_lock_filename, 'via file', lockf
+	#
+	# Load registry backend modules, with None for lazy connections
+	regmod_local_parent = import_module ('ods-registry-local-parent')
+	regmod_sidn = import_module ('ods-registry-sidn')
+	regmod_stargate = import_module ('ods-registry-stargate')
+	#THIS_IS_GLOBAL_CODE# global registries
+	registries = {
+		#TODO# Could make this depend on dynamic configuration
+		None:	(regmod_local_parent,	None),
+		'nl':	(regmod_sidn,		None),
+		#DISABLED# 'com':	(regmod_stargate,	None),
+		#DISABLED# 'net':	(regmod_stargate,	None),
+		#DISABLED# 'org':	(regmod_stargate,	None),
+	}
+	try:
+		fcntl.flock (lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+		#DEBUG# print 'Exclusively locked the file for registry control'
+		#
+		# Main loop; iterate work forever, with a pause in between
+		# Note that registries are disconnected during the pause,
+		# their connections are only cached for onepass () reuse.
+		while True:
+			# Make a pass over the work
+			onepass ()
+			# Close any open registry connections
+			reg2close = []
+			for (regtld,(regmod,regcnx)) in registries.items ():
+				if regcnx is not None:
+					reg2close.append ( regtld )
+			for regtld in reg2close:
+				(regmod,regcnx) = registries [regtld]
+				regmod.disconnect (regcnx)
+				registries [regtld] = (regmod,None)
+			# Pause before making another pass
+			print 'Pausing for 15 minutes'
+			time.sleep (900)
+	except IOError, e:
+		if e.errno == 11:
+			print 'Failed to claim registry ownership via lock file', ods_registry_lock_filename
+	finally:
+		#DEBUG# print 'Releasing the lock file for the registry'
+		#TOOMUCH# os.unlink (ods_registry_lock_filename)
+		fcntl.flock (lockf, fcntl.LOCK_UN)
+		lockf.close ()
+

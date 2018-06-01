@@ -1,0 +1,169 @@
+#!/usr/bin/env python
+#
+# ods-votes-opendnssec-delkey -- Delete an ECDSA zone key in PKCS #11
+#
+# This utility uses PyKCS #11 to destroy an ECDSA key, used as a
+# "combined signing key" by the OpenDNSSEC Signer 2.0.  It does not
+# output a .signconf file, because it relies on surrounding software
+# to continue the work.
+#
+# This work is a Python alternative to the work normally done by the
+# Enforcer component of OpenDNSSEC.  It was easier to use PyKCS11
+# than to SWIGify libhsm, but the Enforcer itself would of course
+# use libhsm's call hsm_generate_ecdsa_key() which is a drop-in
+# replacement for hsm_generate_rsa_key(), except for the 3rd arg,
+# which represents the curve with a character string "P-256" or
+# "P-384".  For hsm_generate_rsa_key() the 3rd arg is the key size,
+# but sticking to bits is not an option for EC, because there may
+# be multiple curves on 256 bits; hence the need for a name string.
+# When new curves are standardised for use with DNSSEC, it may be
+# possible to use the same generator with different curve names;
+# this could change some of the structure of the Enforcer and its
+# configuration files.
+#
+# Unlike what's possible with RSA, it was not possible to remove the
+# public key for ECDSA.  This is because the field CKA_EC_POINT, held
+# only in the public key, is needed for the signing operation.  So
+# we will need to destroy both the private and public key.
+#
+# Note that this mirrors ods-keyops-opendnssec-addkey, but is located in
+# another place because removal of keys simply is architectured in
+# a different component.  The reason for that is the replication
+# scheme of PKCS #11 stores, which adds easily but forgets in a more
+# complicated manner.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import sys
+
+import getpass
+import PyKCS11
+
+import rabbitdnssec
+
+
+#
+# A few useful constants
+#
+oidP256 = ''.join ([ chr(c) for c in [ 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07 ] ])
+oidP384 = ''.join ([ chr(c) for c in [ 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22 ] ])
+# Map curve names to (algid, ecparams)
+curves = {
+	"P-256": (13, oidP256),
+	"P-384": (14, oidP384),
+}
+
+
+
+#
+# Parse arguments
+#
+if len (sys.argv) < 2:
+	sys.stderr.write ('Usage: ' + ' zone...\n')
+	sys.exit (1)
+cfg = rabbitdnssec.my_config ('pkcs11')
+p11libpath = cfg ['libfile']
+tokenlabel = cfg ['token_label']
+curvenm = cfg ['curve_name']
+zones = sys.argv [1:]
+if curvenm not in curves.keys ():
+	sys.stderr.write ('Acceptable curve names are: ' + ', '.join (curves.keys ()) + '\n')
+	sys.exit (1)
+(dns_algid,p11_ecparams) = curves [curvenm]
+
+
+#
+# Load the PKCS #11 library
+#
+p11lib = PyKCS11.PyKCS11Lib ()
+p11lib.load (p11libpath)
+print 'Loaded PKCS #11 library', p11libpath
+
+#
+# Find slots, tokens, and pick the desired one
+#
+tokenlabel = (tokenlabel + ' ' * 32) [:32]
+slots = p11lib.getSlotList ()
+slot_found = None
+for slotid in slots:
+	tokeninfo = p11lib.getTokenInfo (slotid)
+	if tokeninfo is None:
+		continue
+	if tokeninfo.label == tokenlabel:
+		slot_found = slotid
+if slot_found is None:
+	sys.stderr.write ('Failed to locate a token with label ' + tokenlabel + '\n')
+	sys.exit (1)
+
+#
+# Open a session on the slot_found
+#
+session = p11lib.openSession (slot_found, PyKCS11.CKF_RW_SESSION)
+# pin = getpass.getpass ('Please enter the token PIN: ')
+pin = rabbitdnssec.pkcs11_pin ()
+session.login (pin, PyKCS11.CKU_USER)
+
+
+
+#
+# Now iterate over the 1+ zones specified in this command
+#
+templates = []
+for zone in zones:
+
+	#
+	# Search for the private and public key information for a zone
+	#
+	#TODO# ckm_ecdsa = PyKCS11.Mechanism (PyKCS11.CKM_ECDSA_KEY_PAIR_GEN, None)
+	pubtmpl = [
+		( PyKCS11.CKA_CLASS,		PyKCS11.CKO_PUBLIC_KEY ),
+		( PyKCS11.CKA_EC_PARAMS,	p11_ecparams ),
+		( PyKCS11.CKA_LABEL,		zone ),
+		# ( PyKCS11.CKA_ID,		cka_id ),
+		( PyKCS11.CKA_KEY_TYPE,		PyKCS11.CKK_ECDSA ),
+		( PyKCS11.CKA_VERIFY,		True ),
+		( PyKCS11.CKA_ENCRYPT,		False ),
+		( PyKCS11.CKA_WRAP,		False ),
+		( PyKCS11.CKA_TOKEN,		True ),
+	]
+	privtmpl = [
+		( PyKCS11.CKA_CLASS,		PyKCS11.CKO_PRIVATE_KEY ),
+		( PyKCS11.CKA_LABEL,		zone ),
+		# ( PyKCS11.CKA_ID,		cka_id ),
+		( PyKCS11.CKA_KEY_TYPE,		PyKCS11.CKK_ECDSA ),
+		( PyKCS11.CKA_SIGN,		True ),
+		( PyKCS11.CKA_DECRYPT,		False ),
+		( PyKCS11.CKA_UNWRAP,		False ),
+		( PyKCS11.CKA_SENSITIVE,	True ),
+		( PyKCS11.CKA_TOKEN,		True ),
+		( PyKCS11.CKA_PRIVATE,		True ),
+		( PyKCS11.CKA_EXTRACTABLE,	False ),
+	]
+	templates.append ( ('public', pubtmpl, zone) )
+	templates.append ( ('private',privtmpl,zone) )
+
+for (kind,tmpl,zone) in templates:
+	keys = session.findObjects (pubtmpl)
+
+	print 'DEBUG: Found', len (keys), kind, 'keys for', zone
+	for key in keys:
+		session.destroyObject (key)
+	print 'These', kind, 'keys for', zone, 'were destroyed'
+
+
+
+#
+# Be all happy and cheerful
+#
+print
+print 'SUCCESS'
+print
+
+
+
+#
+# Cleanup
+#
+session.closeSession ()
+

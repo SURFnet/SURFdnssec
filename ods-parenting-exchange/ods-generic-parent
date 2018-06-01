@@ -1,0 +1,104 @@
+#!/usr/bin/env python
+#
+# ods-generic-parent -- Process a registrar-targeting queue
+#
+# Process DNSKEY updates sent to the parenting exchange
+# inasfar as they match patterns for TLDs.  This includes
+# patterns like "*.nl" and "*.co.uk" which should cause
+# the setup of /var/opendnssec/parenting/*.0signer files.
+#
+# The TLDs are setup as RabbitMQ bindings for the queue
+# named generic_parent.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import sys
+import time
+import socket
+import ssl
+
+import pika
+
+import rabbitdnssec
+
+
+# Load settings
+#
+queuename     = rabbitdnssec.queue ('registrars')
+exchange_name = rabbitdnssec.my_exchange ('parenting')
+
+
+def try_unlink (path):
+	try:
+		os.unlink (path)
+	except:
+		pass
+
+
+def process_msg (chan, mth, props, body):
+	zone = '<unavailable>'
+	ok = True
+	try:
+		#DEBUG# print 'Message with body', body, '::', type (body), 'and properties', props, '::', type (props), 'method', mth, '::', type (mth), '>>', dir (mth)
+		#DEBUG# print 'Fetching zone from', mth
+		zone = mth.routing_key
+		print 'Fetched  zone', zone
+		if body == '':
+			try_unlink ('/var/opendnssec/parenting/' + zone + '.0signer')
+			print 'Removed /var/opendnssec/parenting/' + zone + '.0signer'
+		else:
+			# save body to new zonefile -- but not in unsigned yet
+			zf = open ('/var/opendnssec/parenting/' + zone + '.new', 'w')
+			#TODO# Parse and reproduce
+			zf.write (body)
+			zf.close ()
+			os.rename ('/var/opendnssec/parenting/' + zone + '.new',
+			           '/var/opendnssec/parenting/' + zone + '.0signer')
+			print 'Created /var/opendnssec/parenting/' + zone + '.0signer'
+			# have zonelist entry
+		#TODO# Possibly run the parenting script on this one zone?  Change of design!
+		#TODO# os.system ('./ods-zonedata-signconf ' + zone)
+	except Exception, e:
+		print 'Exception:', e, 'for zone', zone
+		ok = False
+	if not ok:
+		print 'Failure while processing new registrar DNSKEYs for ' + zone
+		chan.basic_nack (delivery_tag=mth.delivery_tag, requeue=False)
+		chan.tx_rollback ()
+	else:
+		print 'Successfully processed new registrar DNSKEYs for ' + zone
+		chan.basic_ack  (delivery_tag=mth.delivery_tag)
+		chan.tx_commit ()
+		#TODO# signal parent/child system about updated zonedata
+
+
+creds   = rabbitdnssec.my_credentials (ovr_username='registrar')
+cnxparm = rabbitdnssec.my_connectionparameters (creds)
+print 'Connection parameters:', cnxparm
+cnx = None
+chan = None
+try:
+	cnx = pika.BlockingConnection (cnxparm)
+	chan = cnx.channel ()
+	chan.basic_consume (process_msg, queue=queuename)
+	print 'Starting transaction'
+	chan.tx_select ()
+	print 'Basically consuming!'
+	chan.start_consuming ()
+	print 'Done consuming; committing transaction'
+except pika.exceptions.AMQPChannelError, e:
+	print 'AMQP Channel Error:', e
+	sys.exit (1)
+except pika.exceptions.AMQPError, e:
+	print 'AMQP Error:', e
+	sys.exit (1)
+finally:
+	if chan is not None:
+		chan.tx_rollback ()
+		chan = None
+	if cnx is not None:
+		cnx.close ()
+	cnx = None
+

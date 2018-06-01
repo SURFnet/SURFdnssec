@@ -1,0 +1,48 @@
+#!/usr/bin/env python
+#
+# ods-zonedata-unsigned -- Compose the input to the ods-signer
+#
+# The input to the ods-signer consists of the uploaded zone in
+# /var/opendnssec/uploaded/ZONE.txt and the parenting data for the zone in
+# /var/opendnssec/parenting/ZONE.childds, both of which are manipulated
+# atomically through file system semantics.  This script combines the two
+# sources into one zone file, and stores it atomically in
+# /var/opendnssec/unsigned/ZONE.txt, after which it asks ods-signer to
+# sign the new data immediately.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import sys
+
+
+sys.stderr.write ('ods-zonedata-unsigned: OUTDATED UPDATE METHOD, USE THE PARENTING EXCHANGE')
+sys.exit (1)
+
+
+if len (sys.argv) < 2:
+	sys.stderr.write ('Usage: ' + sys.argv [0] + ' zone...\n')
+	sys.exit (1)
+
+for zone in sys.argv [1:]:
+
+	print 'Constructing unsigned zone for', zone
+
+	plainzone = open ('/var/opendnssec/uploaded/' + zone + '.txt').read ()
+	try:
+		childds = open ('/var/opendnssec/parenting/' + zone + '.childds'). read ()
+		newzone = plainzone + '\n\n; Child DS records\n$ORIGIN ' + zone + '.\n\n' + childds
+	except:
+		newzone = plainzone
+
+	tmpn = '/var/opendnssec/unsigned/' + zone + '.writing.' + str (os.getpid ())
+	tmpf = open (tmpn, 'w')
+	tmpf.write (newzone)
+	tmpf.close ()
+	os.rename (tmpn, '/var/opendnssec/unsigned/' + zone + '.txt')
+
+	print 'Requesting signed zone for', zone
+
+	os.system ('ods-signer sign ' + zone)
+

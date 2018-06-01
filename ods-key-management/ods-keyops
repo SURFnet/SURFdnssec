@@ -1,0 +1,90 @@
+#!/usr/bin/env python
+#
+# ods-keyops -- Read ADDKEY / DELKEY operations and execute them
+#
+# This is the main procedure for key operations; it constantly loops
+# with phases of command collection, batch key generation over PKCS #11
+# and backup of the PKCS #11 result.  The two commands that work on
+# PKCS #11 are deliberately placed in independent programs, so there is
+# no shared PKCS #11 state and so the HSM cannot have pending work of
+# any kind.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import sys
+import re
+
+import pika
+
+import rabbitdnssec
+
+
+
+
+cmd_patn = re.compile ('^(ADDKEY|DELKEY) ([a-zA-Z0-9-.]+)$')
+
+
+backend = rabbitdnssec.my_backend ()
+
+with rabbitdnssec.amqp_client_channel (
+			username='collectkeyops',
+			transactional=True) as chan:
+	key_ops = rabbitdnssec.my_queue ('key_ops')
+	votexg  = rabbitdnssec.my_exchange ()
+	while True:
+		qhdl = chan.queue_declare (queue=key_ops, passive=True)
+		print 'qhdl.method.message_count =', qhdl.method.message_count
+		print 'Messages to retrieve:', chan.get_waiting_message_count ()
+		print 'Collecting messages from', key_ops
+		clx = rabbitdnssec.MessageCollector (chan, queue=key_ops)
+		clx.collect ()
+		# cmds = '\n'.join (clx.messages ())
+		# print 'cmds <<<' + cmds + '>>>'
+		# print 'Processing commands:\n * ' + cmds.replace ('\n', '\n * ')
+		success = True
+		add_zones = []
+		del_zones = []
+		for cmd in clx.messages ():
+			try:
+				(opcode,zone) = cmd_patn.match (cmd).groups ()
+				if opcode == 'ADDKEY':
+					add_zones.append (zone)
+				elif opcode == 'DELKEY':
+					del_zones.append (zone)
+				else:
+					raise Exception (cmd)
+			except:
+				sys.stderr.write ('Illegal key_ops command: ' + cmd + '\n')
+				succcess = False
+		if success:
+			sys.stdout.write ('Subcommand: ' +
+					sys.argv [0] + '-' + backend + '-addkey ' +
+					' '.join (add_zones) + '\n')
+			exitval = os.system (sys.argv [0] + '-' + backend + '-addkey ' +
+					' '.join (add_zones))
+			success = (exitval == 0)
+		if success:
+			votes = ' '.join ([opcode] + add_zones + del_zones)
+			chan.basic_publish (
+				exchange=votexg,
+				routing_key='signconf_votes',
+				body=votes)
+		if success:
+			clx.ack ()
+			print 'Acknowledged all -- done!'
+			frame_method = chan.tx_commit ()
+			txfail = type (frame_method.method) != pika.spec.Tx.CommitOk
+			if txfail:
+				raise Exception ('Commit failed after processing ' + key_ops)
+			exitval = os.system ("../ods-utimaco/ods-utimaco-send")
+			if exitval == 0:
+				print 'Submitted Utimaco key store for syncing'
+			else:
+				print 'Failure while trying to sync Utimaco HSMs'
+		else:
+			clx.nack ()
+			print 'Failure -- will sleep for 10 minutes and retry'
+			time.sleep (600)
+

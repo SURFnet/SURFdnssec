@@ -1,0 +1,266 @@
+#!/usr/bin/env python
+#
+# ods-zonedata-signconf -- Generate a .signconf file in an atomic action
+#
+# Generate a .signconf file for the zone named on the commandline,
+# and substitute the current file (if any) with this one.  The
+# replacement is an atomic operation.  When the zone is not present
+# in the zonelist, the .signconf will be removed (also atomically).
+# Every process generates working files holding its PID, so there
+# is no risk of contamination between temporary files.  The naming
+# scheme used is .signconf.PID in the usual directory.
+#
+# This work is a Python replacement of the work normally done by the
+# Enforcer component of OpenDNSSEC.  The generation of zonelist.xml
+# is done when zonedata is added or removed from the system, and the
+# corresponding generation of the signconf is then also started for
+# those zones that changed.  Similarly, there may be a change to the
+# keys available to the zone, as signaled over signconf_votes, and
+# this too triggers the generation of a new signconf, provided that
+# the zone has data present at all.  The origination of these events
+# from two independent sources explains why so much value is placed
+# in the atomicity of .signconf generation.
+#
+# Note that no filesystem storage of keys for a zone is necessary;
+# we use the PKCS #11 entries, which is found by looking for the
+# zone name in CKA_LABEL.  This means that the key allocations for
+# zones are derived from their primary source, the PKCS #11 store,
+# and we only need to pass hints -- such as ADDKEY and DELKEY
+# notifications.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import sys
+import time
+import random
+
+import getpass
+import PyKCS11
+
+from lxml import etree
+
+import rabbitdnssec
+
+
+# Configure as an OpenDNSSEC extension
+#
+cfg = rabbitdnssec.my_config ('opendnssec')
+saltfile = cfg ['saltfile']
+
+
+#
+# A few useful constants
+#
+oidP256 = ''.join ([ chr(c) for c in [ 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07 ] ])
+oidP384 = ''.join ([ chr(c) for c in [ 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22 ] ])
+# Map curve names to (algid, ecparams)
+curves = {
+	"P-256": (13, oidP256),
+	"P-384": (14, oidP384),
+}
+
+
+#
+# Utility function
+#
+def try_unlink (path):
+	try:
+		os.unlink (path)
+	except:
+		pass
+
+#
+# Parse arguments
+#
+if len (sys.argv) < 2:
+	sys.stderr.write ('Usage: ' + ' zone...\n')
+	sys.exit (1)
+p11libpath = rabbitdnssec.pkcs11_libfile
+tokenlabel = rabbitdnssec.pkcs11_token_label
+curvenm = rabbitdnssec.pkcs11_curve_name
+zones = sys.argv [1:]
+if curvenm not in curves.keys ():
+	sys.stderr.write ('Acceptable curve names are: ' + ', '.join (curves.keys ()) + '\n')
+	sys.exit (1)
+(dns_algid,p11_ecparams) = curves [curvenm]
+
+#
+# Load the current zonelist.xml file
+#
+zlf = open ('/var/opendnssec/surfdomeinen/zonelist.xml', 'r')
+zonelist_etree = etree.parse (zlf)
+zlf.close ()
+zonelist = zonelist_etree.xpath ('/ZoneList/Zone/@name')
+print 'DEBUG: zonelist is', zonelist
+
+
+#
+# Load the PKCS #11 library
+#
+p11lib = PyKCS11.PyKCS11Lib ()
+p11lib.load (p11libpath)
+print 'Loaded PKCS #11 library', p11libpath
+
+
+#
+# Find slots, tokens, and pick the desired one
+#
+tokenlabel = (tokenlabel + ' ' * 32) [:32]
+slots = p11lib.getSlotList ()
+slot_found = None
+for slotid in slots:
+	tokeninfo = p11lib.getTokenInfo (slotid)
+	if tokeninfo is None:
+		continue
+	if tokeninfo.label == tokenlabel:
+		slot_found = slotid
+if slot_found is None:
+	sys.stderr.write ('Failed to locate a token with label ' + tokenlabel + '\n')
+	sys.exit (1)
+
+#
+# Open a session on the slot_found
+#
+session = p11lib.openSession (slot_found, PyKCS11.CKF_RW_SESSION)
+# pin = getpass.getpass ('Please enter the token PIN: ')
+pin = rabbitdnssec.pkcs11_pin ()
+session.login (pin, PyKCS11.CKU_USER)
+
+
+#
+# Now iterate over the 1+ zones specified in this command
+#
+for zone in zones:
+
+	#
+	# Determine the file names of concern to us here
+	#
+	newfn = zone + '.signconf'
+	tmpfn = zone + '.signconf.' + str (os.getpid ())
+
+	#
+	#TODO# When the zone is deleted, simply remove its .signconf
+	#
+	if not zone in zonelist:
+		try_unlink (newfn)
+		print 'Made sure', newfn, 'is no longer in the current directory'
+		#TODO# Is "clear" indeed the desired function?
+		os.system ('ods-signer update ' + zone)
+
+		continue	# Already done with this zone
+
+	#
+	# Search for the public key information for a zone
+	#
+	#TODO# ckm_ecdsa = PyKCS11.Mechanism (PyKCS11.CKM_ECDSA_KEY_PAIR_GEN, None)
+	pubtmpl = [
+		( PyKCS11.CKA_CLASS,		PyKCS11.CKO_PUBLIC_KEY ),
+		( PyKCS11.CKA_EC_PARAMS,	p11_ecparams ),
+		( PyKCS11.CKA_LABEL,		zone ),
+		( PyKCS11.CKA_KEY_TYPE,		PyKCS11.CKK_ECDSA ),
+		( PyKCS11.CKA_VERIFY,		True ),
+		( PyKCS11.CKA_ENCRYPT,		False ),
+		( PyKCS11.CKA_WRAP,		False ),
+		( PyKCS11.CKA_TOKEN,		True ),
+	]
+	pubkeys = session.findObjects (pubtmpl)
+
+	print 'DEBUG: Found', len (pubkeys), 'public keys for', zone
+
+	cka_ids = []
+	for pubkey in pubkeys:
+		pk = pubkey.to_dict () ['CKA_ID']
+		cka_id = ''.join (map (lambda x: chr(x),pk))
+		cka_ids.append (cka_id)
+
+	#
+	# Generate a random salt
+	#
+	# Dropped: Brand new salt on every pass is *wasteful* and *dangerous*
+	#
+	#DROP# prng = random.Random ()
+	#DROP# salt = ''.join ([ chr (int (prng.uniform (0, 256))) for i in range(16) ])
+
+	#
+	# Load the salts that were fixed for this system
+	#
+	# NOTE: $ODSSRC/conf/signconf.rng allows only one salt at a time
+	# AYYY: ods-signer update/sign ignore this until a restart (autsch!)
+	#
+	salts = [ ln.strip() for ln in open (saltfile, 'r').readlines() if ln.strip() != '' ]
+
+	#
+	# Construct the .signconf file
+	#
+	signconf = """<SignerConfiguration>
+	<Zone name='""" + zone + """'>
+		<Signatures>
+			<Resign>PT7200S</Resign>
+			<Refresh>PT259200S</Refresh>
+			<Validity>
+				<Default>PT604800S</Default>
+				<Denial>PT604800S</Denial>
+			</Validity>
+			<Jitter>PT43200S</Jitter>
+			<InceptionOffset>PT3600S</InceptionOffset>
+		</Signatures>
+		<Denial>""" + ''.join (["""
+			<NSEC3>
+				<Hash>
+					<Algorithm>1</Algorithm>
+					<Iterations>5</Iterations>
+					<Salt>""" + salt + """</Salt>
+				</Hash>
+			</NSEC3>""" for salt in salts ]) + """
+		</Denial>
+		<Keys>
+			<TTL>PT3600S</TTL>
+			<Key>
+				<Flags>257</Flags>
+				<Algorithm>""" + str (dns_algid) + """</Algorithm>""" + ''.join (["""
+				<Locator>""" + cka_id.encode ('hex') + """</Locator>""" for cka_id in cka_ids ]) + """
+				<KSK/>
+				<ZSK/>
+				<Publish/>
+			</Key>
+		</Keys>
+		<SOA>
+			<TTL>PT3600S</TTL>
+			<Minimum>PT3600S</Minimum>
+			<Serial>datecounter</Serial>
+		</SOA>
+	</Zone>
+</SignerConfiguration>
+"""
+
+	print signconf
+
+	sc = open (tmpfn, 'w')
+	sc.write (signconf)
+	sc.close ()
+	os.rename (tmpfn, newfn)
+	print 'Written ' + newfn + ' to the current directory'
+
+	#
+	# Hint the ods-signer that the zone may have to be re-signed
+	#
+	#TODO# Is "update" indeed the desired function? 'sign' is too strong
+	os.system ('ods-signer update ' + zone)
+
+
+#
+# Be all happy and cheerful
+#
+print
+print 'SUCCESS'
+print
+
+
+
+#
+# Cleanup
+#
+session.closeSession ()
+

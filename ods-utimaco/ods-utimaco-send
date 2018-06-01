@@ -1,0 +1,97 @@
+#!/usr/bin/env python
+#
+# ods-utimaco-send -- Dump the external keys of an Utimaco HSM & send
+#
+# This program assumes that the external keys of an Utimaco HSM are stable,
+# and dumps them to a .keys file.  It then sends this file to a replicating
+# server, using AMQP.
+#
+# The program routes this file to the `signer` exchange on the local
+# RabbitMQ node, using the `pkcs11_extend` routing key.  It is then up to
+# RabbitMQ to relay the message as seen fit under operational policies.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import sys
+import time
+import socket
+import ssl
+
+import pika
+
+import rabbitdnssec
+
+
+pkcs11_routing_keys = [ 'pkcs11_backup', 'pkcs11_extend' ]
+
+cfg = rabbitdnssec.my_config ('ods-utimaco')
+pkcs11_dumpfile = cfg ['pkcs11_dumpfile']
+username        = cfg ['username']
+
+pkcs11_pinfile = rabbitdnssec.pkcs11_pinfile ()
+exchangename   = rabbitdnssec.my_exchange ()
+
+
+try:
+	# Backup file exists; atomically move it out of the way
+	#TODO#NONEED# tmpname = os.tmpnam ()
+	#TODO#NONEED# os.rename (pkcs11_dumpfile, tmpname)
+	#TODO#NONEED# os.unlink (tmpname)
+	os.unlink (pkcs11_dumpfile)
+except:
+	# No reason for panic when the file does not exist
+	pass
+
+if os.system ('p11tool2 LoginUser=`cat ' + pkcs11_pinfile + '` BackupExternalKeys=' + pkcs11_dumpfile) != 0:
+	print 'Failure during backup of external keys'
+	sys.exit (1)
+p11dump = open (pkcs11_dumpfile).read ()
+
+creds   = rabbitdnssec.my_credentials (ovr_appname='ods-utimaco')
+cnxparm = rabbitdnssec.my_connectionparameters (creds)
+props   = rabbitdnssec.my_basicproperties (ovr_username='pkcs11update')
+
+print 'Connection parameters:', cnxparm
+cnx = None
+chan = None
+try:
+	cnx = pika.BlockingConnection (cnxparm)
+	chan = cnx.channel ()
+	chan.tx_select ()
+	print 'Transaction begun'
+	for routing_key in pkcs11_routing_keys:
+		print 'Pushing ', len (p11dump), 'byte backup to', routing_key
+		chan.basic_publish (
+			exchange=exchangename,
+			routing_key=routing_key,
+			properties=props,
+			mandatory=True,
+			body = p11dump
+		)
+	print 'Done sending; committing transaction'
+	frame_method = chan.tx_commit ()
+	print 'tx_commit() returned', frame_method, '::', type (frame_method)
+	print 'tx_commit().method =', frame_method.method, '::', type (frame_method.method)
+	print 'Tx.CommitOk =', pika.spec.Tx.CommitOk, '::', type (pika.spec.Tx.CommitOk)
+	if type (frame_method.method) == pika.spec.Tx.CommitOk:
+		print 'AMQP Transaction Succes (Delivered to all Bound Queues)'
+	else:
+		print 'AMQP Transaction Failure'
+		sys.exit (1)
+except pika.exceptions.AMQPChannelError, e:
+	print 'AMQP Channel Error:', e
+	sys.exit (1)
+except pika.exceptions.AMQPError, e:
+	print 'AMQP Error:', e
+	sys.exit (1)
+finally:
+	if chan is not None:
+		chan.tx_rollback ()
+		chan = None
+	if cnx is not None:
+		cnx.close ()
+	cnx = None
+
+sys.exit (0)

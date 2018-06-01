@@ -1,0 +1,164 @@
+#!/usr/bin/env python
+#
+# ods-rsync-zonedata -- Wrapper around RSync --server to relay to AMQP
+#
+# This script detects changes in the before and after of an RSync run,
+# and uploads those to AMQP.  Deleted files will be sent as empty messages.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import time
+import ssl
+import socket
+import pickle
+
+import pika
+
+import rabbitdnssec
+
+
+# Read configuration for this application
+#
+cfg = rabbitdnssec.my_config ('ods-rsync-zonedata')
+trigger_fifo	= cfg ['trigger_fifo']
+pickle_jar	= cfg ['pickle_jar']
+upload_dir	= cfg ['upload_dir']
+zone_prefix	= cfg ['zone_prefix']
+zone_postfix	= cfg ['zone_postfix']
+username	= cfg ['username']
+#
+exchangename = rabbitdnssec.my_exchange ()
+routing_key = 'zonedata'
+
+
+# Fetch change/modification times for all files
+#
+def snapshot_uploads ():
+	retval = { }
+	for fn in os.listdir (os.curdir):
+		fs = os.stat (fn)
+		retval [fn] = (fs.st_ctime, fs.st_mtime)
+	return retval
+
+
+# We shall work in the zone upload directory
+#
+os.chdir (upload_dir)
+
+
+while True:
+
+	# Wait for the signal that we should sample zonedata
+	#
+	print 'Awaiting the trigger on the fifo', trigger_fifo
+	open (trigger_fifo).read ()
+
+	# Link up to the AMQP infrastructure
+	#
+	creds = rabbitdnssec.my_credentials ()
+	cnxparm = rabbitdnssec.my_connectionparameters (creds)
+	cnx = None
+	chan = None
+	cnx = pika.BlockingConnection (cnxparm)
+	chan = cnx.channel ()
+	chan.tx_select ()
+
+	# Load a snapshot of the situation before RSync
+	#
+	try:
+		pj = open (pickle_jar, "r")
+		old = pickle.load (pj)
+		pj.close ()
+	except:
+		old = { }
+
+	# Take a snapshot of the situation after RSync
+	#
+	new = snapshot_uploads ()
+
+	# Anything that changed during RSync leads to an AMQP message
+	#
+	#TODO# Detect newly added zones
+	#
+	all_keys = set (old.keys () + new.keys ())
+	print 'Zone list:', all_keys
+	for fn in all_keys:
+		panic = False
+		if fn [:len(zone_prefix)] != zone_prefix :
+			continue
+		zone = fn [len(zone_postfix):]
+		if len (zone_postfix) > 0:
+			if fn [-len(zone_postfix):] != zone_postfix:
+				continue
+			zone = zone [-len(zone_postfix)]
+		print 'Zonefile:', fn, 'for zone', zone
+		if not new.has_key (fn):
+			# Erase from OpenDNSSEC by sending an empty key
+			print 'Removing', fn
+			zonedata = ''
+		elif old.has_key (fn) and new [fn] == old [fn]:
+			print 'No changes to', fn
+			continue
+		else:
+			print 'Sending', fn
+			try:
+				fh = open (fn)
+				zonedata = fh.read ()
+				fh.close ()
+			except:
+				print 'Failed to load zonedata', fn, '(signaling panic)'
+				panic = True
+				zonedata = None
+		try:
+			if zonedata is None:
+				raise Exception ('Failed to load zonedata')
+			print 'Uploading zone file', fn, 'sized', len (zonedata), 'bytes to', routing_key
+
+			heads = { 'subject': zone }
+			props = rabbitdnssec.my_basicproperties (headers=heads)
+			chan.basic_publish (
+				exchange=exchangename,
+				routing_key=routing_key,
+				properties=props,
+				mandatory=True,
+				body=zonedata
+			)
+			print 'Done sending; committing transaction'
+			frame_method = chan.tx_commit ()
+			if type (frame_method.method) == pika.spec.Tx.CommitOk:
+				print 'AMQP Transaction Succes (Delivered to all Bound Queues)'
+			else:
+				print 'AMQP Transaction Failure while sending', fn, '(signaling panic)'
+				panic = True
+		except pika.exceptions.AMQPChannelError, e:
+			print 'AMQP Channel Error:', e, '(signaling panic on', fn, ')'
+			panic = True
+		except pika.exceptions.AMQPError, e:
+			print 'AMQP Error:', e, '(signaling panic on', fn, ')'
+			panic = True
+		except Exception, e:
+			print 'General exception:', e
+			panic = True
+		# In case of panic, willfully mutilate the new state
+		if panic:
+			new [fn] = 'SIGN OF TERRIBLE PANIC IN SENDING THIS ZONEDATA; WILL NEED TO TRY AGAIN ON THE NEXT ITERATION'
+
+	if chan is not None:
+		chan = None
+	if cnx is not None:
+		cnx.close ()
+	cnx = None
+
+	#
+	# Finally write out the new data (with mutilations in case of panic)
+	try:
+		pj = open (pickle_jar + '.tmp', 'w')
+		pickle.dump (new, pj)
+		pj.close ()
+		os.rename (pickle_jar + '.tmp', pickle_jar)
+	except:
+		print 'Failed to write new version of zonedata state to', pickle_jar
+		print 'Will resend all the AMQP messages on the next run...'
+

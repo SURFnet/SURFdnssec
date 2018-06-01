@@ -1,0 +1,643 @@
+#!/usr/bin/env python
+#
+# ods-parenting-exchange -- Dynamically linked queues for zone parenting
+#
+# This is the major exchange management daemon through which zones exchange
+# parenting information.  External programs may also link in, for instance
+# TLD registry nodes.  External programs may also send a hint with the zone
+# name when it has been altered in /var/opendnssec/uploaded; to this end, it
+# sends a body with the zone name to queue zonekeys with '' as routing_key.
+# Finally, the parenting script connects here to insert or retract DNSKEYs
+# as they mature into their .3parent state.
+#
+# We always pass the zone through ods-parenting-exchange, which keeps state on
+# all the zones' NS/DNSKEY coupling through queues per zone. This state is a
+# queue-bound instance for the given zone, with callbacks to all instances made
+# one by one in a single callback-invoking process/thread. The instance takes
+# notice of queues' existence and uses it to decide whether a DNSKEY shall be
+# delivered for a given child NS.
+# 
+# Setup of these instances happens in a few phases, internally arranged by
+# ods-parenting-exchange:
+# 
+# 1. Create instances for each zone that may exist, reading the
+#    corresponding files in /var/opendnssec/uploaded, opening a queue for
+#    each new instance and taking note of child NS records
+#    
+# 2. Attempts to create an instance that has no file in
+#    /var/opendnssec/uploaded will fail (and no queue will be created). In
+#    fact, this mechanism is also used to terminate the instance (and
+#    remove the queue if it exists)
+#    
+# 3. Once all instances have been created (attempted), send around
+#    DNSKEY requests for each child NS, taking note of failures due to
+#    missing queues as a way of setting up a child NS without a published
+#    DNSKEY
+#    
+# 4. As soon as all child NS are either supplied or known-to-fail,
+#    produce the zone in /var/opendnssec/unsigned, but only signal the
+#    signer when something changed (construct the new file with child DS
+#    in a particular order, then compare the files before pushing the new
+#    one for publication)
+#    
+# 5. At this point, the ods-parenting-exchange is live. From now on, it
+#    processes notifications that something about a zone in
+#    /var/lib/uploaded has changed, and exchanges NS and DNSKEY records
+#    when they are added or removed, as needed for keeping parenting
+#    relations alive.
+#    
+# 6. Breakdown of this system is never a problem, provided that
+#    temporary files in /var/lib/unsigned can be easily recognised for
+#    cleanup, or that their names are fixed; and given that their insertion
+#    to replace the last version is atomic (through a filesystem move
+#    operation). The one remaining concern might be that ods-signer sign
+#    drops out, but this only means that the expedience of the update is
+#    gone due to this restart glitch; eventually, the ods-signer will
+#    pickup on the (atomically installed, so reliably complete) update for
+#    the unsigned zone file.
+#    
+# 7. When processing new zone files, RRsets of child NS may be dropped
+#    (which is trivial) and other RRsets of child NS may be added. We do
+#    not need to wait for a reply-or-deny by the children, because any
+#    DNSKEY that they might offer would already be presented.  Only when
+#    a new child or a new parent is introduced, is there a risk of spurious
+#    publication of NS without DS, so insecure delegation.  This however, is
+#    at times of transition, which are excusable, unlike the operationally
+#    initiated effects described for bootstrapping of the parenting
+#    exchange.  As a result, there is no pressing need for waiting until
+#    a child responds, once the parenting exchange has finished booting.
+#    
+# 8. We shall have one queue hostname + '_zonekeys' on the exchange for
+#    parenting, and use it to send notifications about new, updated and
+#    removed files in /var/opendnssec/uploaded. In addition, removal of
+#    zones is detected by a swan song, consisting of a single '' response
+#    to indicate absense of any DNSKEYs in the zone apex.
+#
+# To be sure that all queues are tried (and at some point deleted), be sure
+# that removal of zones is also notified here (send look-at-zone notifications
+# after writing into /var/opendnssec/uploaded, do it after removing the file,
+# and use that to pickup on zone removal from that directory and passing such
+# notions on to /var/opendnssec/unsigned and parenting queue and zone
+# management object removal).
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+
+import os
+import sys
+import socket
+import ssl
+
+import pika
+
+import dns.zone
+
+from dns.rdataclass import IN
+from dns.rdatatype  import NS, DNSKEY
+
+import rabbitdnssec
+
+
+# Prepare fixed names
+#
+queue_name    = rabbitdnssec.my_queue ('zonekeys')
+exchange_name = rabbitdnssec.my_exchange ('parenting')
+
+
+#
+# Dynamically import the signer-specific backend module
+#
+
+backendmod = rabbitdnssec.my_backendmod ('ods-parenting-exchange-')
+
+
+#
+# Return the upload path for a given zone name.
+#
+def uploaded_file (zone_name):
+	return '/var/opendnssec/uploaded/' + zone_name + '.txt'
+
+#
+# Return the signer input for a given zone name.
+#
+def unsigned_file (zone_name):
+	return backendmod.unsigned_file (zone_name)
+
+#
+# Return the signer output for a given zone name.
+#
+def signed_file (zone_name):
+	return backendmod.signed_file (zone_name)
+
+
+#
+# This is a piece of python-dns, for parsing the textual messages
+# passed over the parenting exchange.  The textual representation
+# is preferred but python-dns only supports parsing entire zone
+# files.  We replicate the code to apply it to smaller chunks;
+# since what we receive comes from our code, we can assume proper
+# forms for the records.
+#
+# Yes, the wire format of DNS would be an alternative.  Perhaps.
+# It is not going to be friendly on operators though, when they
+# find it stuck in a queue or something like that.
+#
+# The routine is quite willing to parse an empty string, turning
+# it into (None,None,None,[]).  Other lines must all be of
+# the same ttl, class and type, and match the sender by name.
+#
+# The general return value is (ttl,class,type,[rrdata,...])
+# where the name of the sender (or @) is required for all records,
+# and the sameness of the ttl, class and type over all the rrdata
+# values in the list is also a requisite.
+#
+
+root_name = dns.name.from_text ('.')
+
+def parse_dnstext (dnstext, sender):
+	#DEBUG# print 'Parsing', dnstext, 'from', sender
+	rrs = []
+	tizer = dns.tokenizer.Tokenizer (dnstext, sender)
+	prev = None
+	ttl_token = None
+	cls_token = None
+	typ_token = None
+	while 1:
+		# Start as in read()
+		# Check out the line start
+		#NONAME# name_token = tizer.get (True, True)
+		#NONAME# if name_token.is_eof ():
+		#NONAME# 	break
+		# Continue as in _rr_line()
+		# Learn about the name
+		#NONAME# if not name_token.is_whitespace ():
+		#NONAME# 	print 'Name', name_token.value, 'can be @ or', sender
+		#NONAME# 	assert (name_token.value in ['@', sender])
+		# Parse the TTL #TODO# Maybe match prior
+		#NONAME# ttl_token = tizer.get ().value.upper ()
+		token = tizer.get ()
+		if token.is_eof ():
+			break
+		ttl_token = token.value.upper ()
+		print 'TTL is', ttl_token
+		ttl = dns.ttl.from_text (ttl_token)
+		# Parse the class #TODO# Maybe match prior
+		cls_token = tizer.get ().value.upper ()
+		cls = dns.rdataclass.from_text (cls_token)
+		# Parse the type #TODO# Maybe match prior
+		typ_token = tizer.get ().value.upper ()
+		typ = dns.rdatatype.from_text (typ_token)
+		# Parse the data
+		rdata = dns.rdata.from_text (cls, typ, tizer, sender, False)
+		# Check match with any previous loop
+		if prev is not None:
+			assert (prev == (ttl_token, cls_token, typ_token))
+		prev = (ttl_token, cls_token, typ_token)
+		# Append the rdata to the result
+		rrs.append ( rdata )
+	return (ttl_token,cls_token,typ_token,rrs)
+
+
+#
+# The parenting_exchange is a map from zone name to instances of the
+# class ParentingExchange, defined below.  Each represents the zone
+# by which it is indexed.  This structure is used to detect whether
+# a zone is already represented, and to find the respective instance.
+#
+parenting_exchange = { }
+
+class ParentingExchange (object):
+	"""Instances of ParentingExchange serve one particular zone.
+	   They subscribe to the proper routing_keys to be able to
+	   respond to anything of interest to the zone, whether it is
+	   aimed at the zone from its parents, children or elsewhere.
+	   To this end, it registers various instance methods as
+	   callback for the zone_parenting queue.
+	   
+	   To initialise an instance, the zone file in
+	   /var/opendnssec/uploaded/ZONE.txt is loaded into this
+	   class.  Upon changes, output is generated into
+	   /var/opendnssec/unsigned/ZONE.txt files, basically holding
+	   the uploaded zone plus any additional DS records conforming
+	   to the DNSKEY records sent over the queue, and matching the
+	   names of NS records within the loaded zone.
+	"""
+
+	def __init__ (self, chan, zone_name):
+		"""Create a queue for the named zone, and bind a callback to
+		    events that call for handling as a parent or child.
+		"""
+		self.zone_name = zone_name
+		self.chan = chan
+		self.child_ns = {}
+		self.child_dnskeys = {}
+		self.dnskeys = None
+		self.consumer_tags = []
+		self.children_up2date = False
+		self.setup_dnskeys ()
+		self.update_uploaded ()
+		self.setup_queue_and_callback ()
+
+	def setup_queue_and_callback (self):
+		"""Setup the callback for our zone-specific queue.
+		   The cb_xxx() methods are bound from the instance,
+		   so they expect the right parameters (without self).
+		   
+		   Note that the queue is not named after the zone,
+		   but that it appends '_zonekeys' to differentiate
+		   it from other queues.  The routing_key is what is
+		   used to recognise traffic, so to the parenting
+		   exchange software this is barely noticeable.
+		"""
+		self.chan.queue_declare (queue=self.zone_name + '_zonekeys',
+				durable=True,
+				exclusive=False,
+				auto_delete=False)  # Could auto_delete harm?
+		# Children's publications
+		self.chan.queue_bind (exchange=exchange_name,
+				queue=self.zone_name + '_zonekeys',
+				routing_key='#.*.' + self.zone_name)
+		# TODO???Bind??? to publications by our direct parent
+		# TODO???Bind??? to publications sent to us
+		# self.chan.queue_bind (exchange=exchange_name,
+		# 		queue=self.zone_name + '_zonekeys',
+		# 		routing_key=self.zone_name)
+		self.chan.basic_consume (self.cb_zone_queue,
+				queue=self.zone_name + '_zonekeys')
+
+	def close (self):
+		"""When the zone file is removed, the zone has vanished.
+		   As a result, the subscriptions must be stopped and no
+		   further callbacks processed.  The last thing other
+		   zones will hear from us is an empty message ''.
+		"""
+		for tag in self.consumer_tags:
+			self.basic_cancel (tag)
+		self.consumer_tags = []
+		self.chan.basic_publish (exchange=exchange_name,
+				routing_key=self.zone_name,
+				body='')
+		self.chan.queue_delete (queue=self.zone_name + '_zonekeys')
+
+	def announce_dnskeys (self):
+		"""Route our DNSKEYs to the listeners, by passing it to the
+		   parenting exchange with our zone_name as the routing_key.
+		   When we have none, send the empty string '' instead.
+		   
+		   TODO: Future use of CDNKSEY (and perhaps CDS) would go
+		         here.  We may want to add announce_dss() too,
+		         though not all parents may like DS records;
+		         notably SIDN, the .nl registrar, requires DNSKEYs.
+		"""
+		print 'Announcing', self.dnskeys, 'routed as', self.zone_name
+		self.chan.basic_publish (exchange=exchange_name,
+				routing_key=self.zone_name,
+				body=self.dnskeys)
+
+	def setup_dnskeys (self):
+		"""Fetch the initial round of DNSKEYs for the zone.  Do not
+		   send them with announce_dnskeys() yet, as not all parents
+		   may be listening yet.  After all instances have been
+		   created, a call to announce_dnskeys() will take care of
+		   this submission.
+		"""
+		try:
+			dnskeys = open ('/var/opendnssec/parenting/' +
+					self.zone_name + '.3parent'
+						).readlines () [1:]
+			dnskeys = map (lambda k:
+					#TODO#REFORMAT# self.zone_name + '. IN DNSKEY ' + k,
+					'3600 IN DNSKEY ' + k,
+						dnskeys)
+			dnskeys = ''.join (dnskeys).strip ()
+			print 'Found for', zone + ':'
+			print dnskeys
+			#TODO# Announce by submission of the keys to any listeners
+		except:
+			dnskeys = ''
+		self.dnskeys = dnskeys
+
+	def publish_unsigned (self, remove=False):
+		"""Publish the zone with any new data, and (only!) if there have
+		   been changes, signal ods-signer to re-sign the zone.
+		   This process is subject to the flag self.children_up2date,
+		   which is set after initial creation of this and other
+		   ParentingExchange instances.
+		   
+		   Such dramatic pauses are not required during later runs; when
+		   a new NS is proposed, we will immediately make inquiries for
+		   the corresponding DNSKEYs, but we will already publish before
+		   they have arrived.  The resulting insecure delegation can be
+		   publicly announced by staff once the link has come through,
+		   but in DNS the subzone will exist beforehand; this matches
+		   the procedure for most zones under a TLD.
+		"""
+		if not self.children_up2date:
+			# The exchange is incomplete; we will be triggered when ready
+			return
+		all_ds = []
+		for (czone,ckeys) in self.child_dnskeys.items ():
+			print 'DEBUG: child zone', czone, 'offers', ckeys
+			tizer = dns.tokenizer.Tokenizer (ckeys, czone)
+			token = tizer.get ()
+			if token.is_eof ():
+				break
+			ttl_token = token.value.upper ()
+			print 'TTL is', ttl_token
+			ttl = dns.ttl.from_text (ttl_token)
+			# Parse the class #TODO# Maybe match prior
+			cls_token = tizer.get ().value.upper ()
+			cls = dns.rdataclass.from_text (cls_token)
+			assert (cls == IN)
+			# Parse the type #TODO# Maybe match prior
+			typ_token = tizer.get ().value.upper ()
+			typ = dns.rdatatype.from_text (typ_token)
+			assert (typ == DNSKEY)
+			cdnskey = dns.rdtypes.ANY.DNSKEY.DNSKEY.from_text (IN, DNSKEY, tizer)
+			print 'DEBUG: cdnskey =', cdnskey, '::', type (cdnskey)
+			czname = dns.name.from_text (czone)
+			dsalg = 'SHA256' #TODO#FIXED#
+			cds = dns.dnssec.make_ds (czname, cdnskey, dsalg)
+			print 'DEBUG: cds =', cds, '::', type (cds)
+			cds = [ czone + '.\t3600\tIN\tDS\t' + c for c in cds.to_text ().split ('\n') if c != '' ]
+			print 'DEBUG: cds =', cds, '::', type (cds)
+			all_ds = all_ds + cds
+		all_ds.sort ()  # Reproducible text #TODO# Bump SOA serial...
+		ds_text = '\n'.join (all_ds)
+		zone_path = uploaded_file (self.zone_name)
+		zone_text = open (zone_path).read ()
+		zone_text += '\n; Parenting adds:\n\n' + ds_text + '\n'
+		presig_path = unsigned_file (self.zone_name)
+		signed_path =   signed_file (self.zone_name)
+		print 'DEBUG: Writing changed zone for', self.zone_name
+		outfd = open (presig_path + '.prepublish', 'w')
+		outfd.write (zone_text)
+		outfd.close ()
+		have_zone = True
+		try:
+			signed_text = os.stat (signed_path)
+		except:
+			#MOVED#OUT# backendmod.zone_add (self.zone_name, sign_path)
+			have_zone = False
+			print 'Have no signed zone file in', signed_path
+		if have_zone and not remove:
+			backendmod.zone_update (self.zone_name, presig_path + '.prepublish', signed_path)
+			try:
+				#TODO#TMP# os.unlink (presig_path + '.prepublish')
+				print 'DEBUG:TODO: Temporarily keeping ' + presig_path + '.prepublish'
+			except OSError, oe:
+				if oe.errno != 2:
+					raise
+		if remove:
+			#MOVED#OUT# backendmod.zone_del (self.zone_name)
+			try:
+				os.unlink (presig_path)
+			except OSError, oe:
+				if oe.errno != 2:
+					raise
+
+	def enable_publication (self):
+		"""After all the ParentingExchange instances have been created,
+		   we can rest assured that all live zones have a queue attached
+		   to the exchange, and that they have setup_dnskeys() after our
+		   own queue setup.  We should even have processed any such
+		   incoming DNSKEYs at this point, so now we can publish our
+		   zone for the first time, and in future for any update.
+		"""
+		self.children_up2date = True
+		self.publish_unsigned ()
+
+	def update_uploaded (self):
+		"""Read the zonefile, or detect its absense.  Process changes
+		   to the child NS, and if need be, close down service.
+		"""
+		#
+		# Dig zone information from the uploaded file
+		zone_path = uploaded_file (self.zone_name)
+		zone_nobj = dns.name.from_text (self.zone_name)
+		try:
+			zone_obj = dns.zone.from_file (zone_path, origin=self.zone_name, allow_include=False)
+		except IOError,ioe:
+			if ioe.errno != 2:
+				raise
+			zone_obj = None
+		#
+		# Construct the new, possibly empty child_ns
+		new_ns = {}
+		if zone_obj is not None:
+			for (nm,node) in zone_obj.nodes.items ():
+				if str (nm) in ['@', self.zone_name]:
+					continue
+				opt_ns = node.get_rdataset (rdclass=IN, rdtype=NS)
+				if opt_ns is not None:
+					print 'DEBUG: ns_name =', str (nm) + ' for ', self.zone_name, 'opt_ns =', opt_ns, '::', type (opt_ns)
+					print 'DEBUG: origin =', self.zone_name, '::', type (self.zone_name)
+					absrr = opt_ns.to_text (origin=zone_nobj, relativize=False)
+					if nm.is_absolute ():
+						absnm = nm.to_text ()
+					else:
+						absnm = nm.to_text () + '.' + self.zone_name
+					new_ns [absnm] = absrr
+		old_ns = self.child_ns
+		self.child_ns = new_ns
+		#
+		# Find newly added child NS and announce them publicly
+		#TODO# May only need to ask for the DNSKEYs
+		for (absnm,nsset) in new_ns.items ():
+			if not old_ns.has_key (absnm):
+				self.chan.basic_publish (exchange=exchange_name,
+						routing_key=absnm,
+						body=nsset)
+		#
+		# Find removed child NS and retract them publicly
+		#TODO# May not need to ask for anything, just drop it
+		for (absnm,nsset) in old_ns.items ():
+			if not new_ns.has_key (absnm):
+				if self.child_dnskeys.has_key (absnm):
+					del self.child_dnskeys [absnm]
+				self.chan.basic_publish (exchange=exchange_name,
+						routing_key=absnm,
+						dnskeys='')
+		#
+		#TODO# WHEN/HOW TO ANNOUNCE DNSKEY RRSET IN ZONE APEX???
+		#
+		# Publish the updated zone
+		self.publish_unsigned (remove=(zone_obj is None))
+		#
+		# Optionally close down (when the uploaded file has vanished)
+		if zone_obj is None:
+			self.close ()
+
+	def cb_zone_queue (self, chan, mth, props, body):
+		"""Process a callback bound to the zone queue."""
+		rkey = mth.routing_key
+		zone = self.zone_name
+		if rkey == zone:
+			# Information routed directly to me...
+			#  1. When DNSKEY, store it, publish if we also have an NS
+			#  2. When NS, respond with DNSKEY
+			(ttl,cls,typ,rrds) = parse_dnstext (body, zone)
+			if typ == 'DNSKEY':
+				#TODO# WHAT THE... WHO WOULD EVER...
+				#TODO# MAYBE THE PARENTING CODE...
+				assert ("What the... who would ever..." is None)
+			elif typ == 'NS':
+				assert (self.dnskeys is not None)
+				self.chan.basic_publish (exchange=exchange_name,
+						routing_key=sender,
+						body=self.dnskeys)
+		elif zone [-len (rkey)-1:] == '.' + rkey:
+			# Information from a parent zone...
+			#  1. When NS, respond with DNSKEY
+			(ttl,cls,typ,rrds) = parse_dnstext (body, zone)
+			if typ == 'NS':
+				assert (self.dnskeys is not None)
+				self.chan.basic_publish (exchange=exchange_name,
+						routing_key=sender,
+						body=self.dnskeys)
+		elif rkey [-len (zone)-1:] == '.' + zone:
+			# Information from a child zone...
+			#  1. When DNKSEY, store it, publish if we also have an NS
+			print 'Got DNSKEY (I suspect) in', body, 'routed as', rkey
+			(ttl,cls,typ,rrds) = parse_dnstext (body, rkey)
+			#DEBUG# print 'Done parsing'
+			if typ == 'DNSKEY':
+				self.child_dnskeys [rkey] = body
+				if self.child_ns.has_key (zone):
+					self.publish_unsigned ()  # Possibly deferred
+		else:
+			# Information unrelated to us... is a routing error!
+			raise Exception ("ParentingExchange:cb_zone_queue() routing key " + rkey + " should not arrive at zone " + zone)
+		#
+		# Only if all went well, acknowledge
+		#
+		chan.basic_ack (mth.delivery_tag)
+
+
+
+#
+# Update the dictionary parenting_exchange with new or removed
+# instances.  This is an idempotent operation, so it does not
+# matter if too many updates arrive over the queue; as a result,
+# we can first run this for any files in the uploaded directory
+# and then listen in on hints to look at an uploaded zone again.
+#
+
+def update_parenting_exchange (zone_name):
+	global parenting_exchange
+	if parenting_exchange.has_key (zone_name):
+		parenting_exchange [zone_name].update_uploaded ()
+	else:
+		parenting_exchange [zone_name] = ParentingExchange (chan, zone_name)
+
+
+#
+# Callback for update hints about uploaded zones.  These are sent to the
+# parenting_exchange queue with routing_key '' which is picked up here
+# to cause update hints.
+#
+
+def cb_uploaded_hint (chan, mth, _props, body):
+	print 'DEBUG: parenting exchange will be hinted to update zone', body
+	update_parenting_exchange (zone_name=body)
+	chan.basic_ack (mth.delivery_tag)
+
+
+#
+# Create the queueing infrastructure for the parent exchange.
+#
+
+creds   = rabbitdnssec.my_credentials (ovr_username='parenting')
+cnxparm = rabbitdnssec.my_connectionparameters (creds)
+print 'Connection parameters:', cnxparm
+cnx = None
+chan = None
+try:
+	cnx = pika.BlockingConnection (cnxparm)
+	chan = cnx.channel ()
+	#TODO:CLASS# chan.basic_consume (process_msg, queue=queue_name)
+	#TODO:NOTHERE# print 'Starting transaction'
+	#TODO:NOTHERE# chan.tx_select ()
+	#TODO:CLASS# print 'Basically consuming!'
+	#TODO:CLASS# chan.start_consuming ()
+	#TODO:CLASS# print 'Done consuming; committing transaction'
+except pika.exceptions.AMQPChannelError, e:
+	print 'AMQP Channel Error:', e
+	sys.exit (1)
+except pika.exceptions.AMQPError, e:
+	print 'AMQP Error:', e
+	sys.exit (1)
+#TODO:BELOW# finally:
+#TODO:BELOW# 	if chan is not None:
+#TODO:BELOW# 		#TODO:NOTHERE# chan.tx_rollback ()
+#TODO:BELOW# 		chan = None
+#TODO:BELOW# 	if cnx is not None:
+#TODO:BELOW# 		cnx.close ()
+#TODO:BELOW# 	cnx = None
+
+
+#
+# Create instances of the uploaded zone file directory.  We will later
+# subscribe to hints from other processes to look at the directory once
+# more, and then update our notion of active zones.  There may be some
+# things on the queue already, but since zones are processed in an
+# idempotent manner, that should not be problematic.
+#
+# We first create all zone queus, before proceeding to the announcment
+# of the DNSKEYs of the various instances.  And only after they have
+# all been sent to the instances has the time come to allow them to
+# publish changes.
+#
+
+for zone in os.listdir ('/var/opendnssec/uploaded'):
+	if zone [-4:] != '.txt':
+		continue
+	zone = zone [:-4]
+	update_parenting_exchange (zone)
+
+for pex in parenting_exchange.values ():
+	pex.announce_dnskeys ()
+
+for pex in parenting_exchange.values ():
+	pex.enable_publication ()
+
+
+#
+# Now register for hints about uploaded zones, sent here by others.
+#
+
+#STATIC# chan.queue_declare (queue=queue_name,
+#STATIC# 		durable=True,
+#STATIC# 		exclusive=False,
+#STATIC# 		auto_delete=False)
+#STATIC# chan.queue_bind (exchange=exchange_name,
+#STATIC# 		queue=signer_machine + '_zonekeys',
+#STATIC# 		routing_key='')
+uploaded_hints_tag = chan.basic_consume (cb_uploaded_hint,
+		queue=queue_name)
+
+
+#
+# Enter the main loop of processing parenting exchange messages.
+#
+# This will arrange callbacks to be called, both our own and those
+# belonging with the ParentingExchange instances.
+#
+
+chan.start_consuming ()
+
+
+#
+# To end this program, unwind all instances and unregister our own
+# callback to cb_uploaded_hint().
+#
+self.basic_cancel (uploaded_hints_tag)
+for pex in parenting_exchange.values ():
+	pex.close ()
+chan = None
+cnx.close ()
+cnx = None
+
+sys.exit (0)
+

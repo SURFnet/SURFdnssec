@@ -1,0 +1,5 @@
+*.pyc
+*.o
+lib*.so
+lib*.a
+*.db
