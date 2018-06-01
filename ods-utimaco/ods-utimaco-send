@@ -22,6 +22,7 @@ import ssl
 import pika
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 pkcs11_routing_keys = [ 'pkcs11_backup', 'pkcs11_extend' ]
@@ -45,7 +46,7 @@ except:
 	pass
 
 if os.system ('p11tool2 LoginUser=`cat ' + pkcs11_pinfile + '` BackupExternalKeys=' + pkcs11_dumpfile) != 0:
-	print 'Failure during backup of external keys'
+	log_critical ('Failure during backup of external keys')
 	sys.exit (1)
 p11dump = open (pkcs11_dumpfile).read ()
 
@@ -53,16 +54,14 @@ creds   = rabbitdnssec.my_credentials (ovr_appname='ods-utimaco')
 cnxparm = rabbitdnssec.my_connectionparameters (creds)
 props   = rabbitdnssec.my_basicproperties (ovr_username='pkcs11update')
 
-print 'Connection parameters:', cnxparm
 cnx = None
 chan = None
 try:
 	cnx = pika.BlockingConnection (cnxparm)
 	chan = cnx.channel ()
 	chan.tx_select ()
-	print 'Transaction begun'
 	for routing_key in pkcs11_routing_keys:
-		print 'Pushing ', len (p11dump), 'byte backup to', routing_key
+		log_debug ('Pushing', len (p11dump), 'byte backup to', routing_key)
 		chan.basic_publish (
 			exchange=exchangename,
 			routing_key=routing_key,
@@ -70,21 +69,21 @@ try:
 			mandatory=True,
 			body = p11dump
 		)
-	print 'Done sending; committing transaction'
+	log_info ('Done sending; committing transaction')
 	frame_method = chan.tx_commit ()
-	print 'tx_commit() returned', frame_method, '::', type (frame_method)
-	print 'tx_commit().method =', frame_method.method, '::', type (frame_method.method)
-	print 'Tx.CommitOk =', pika.spec.Tx.CommitOk, '::', type (pika.spec.Tx.CommitOk)
+	# log_debug ('tx_commit() returned %s :: %s' % (str (frame_method), str (type (frame_method))))
+	# log_debug ('tx_commit().method = %s :: %s' % (str (frame_method.method), str (type (frame_method.method))))
+	# log_debug ('Tx.CommitOk = %s :: %s' % (str (pika.spec.Tx.CommitOk), str (type (pika.spec.Tx.CommitOk))))
 	if type (frame_method.method) == pika.spec.Tx.CommitOk:
-		print 'AMQP Transaction Succes (Delivered to all Bound Queues)'
+		log_info ('AMQP Transaction Succes (Delivered to all Bound Queues)')
 	else:
-		print 'AMQP Transaction Failure'
+		log_error ('AMQP Transaction Failure')
 		sys.exit (1)
 except pika.exceptions.AMQPChannelError, e:
-	print 'AMQP Channel Error:', e
+	log_error ('AMQP Channel Error: %s', e)
 	sys.exit (1)
 except pika.exceptions.AMQPError, e:
-	print 'AMQP Error:', e
+	log_error ('AMQP Error: %s', e)
 	sys.exit (1)
 finally:
 	if chan is not None:

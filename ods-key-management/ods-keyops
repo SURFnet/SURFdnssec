@@ -16,11 +16,16 @@ import os
 import sys
 import re
 
+import time
+
 import pika
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
+cfg = rabbitdnssec.my_config ()
+hsm_sync_cmd = cfg.get ('hsm_sync_cmd')
 
 
 cmd_patn = re.compile ('^(ADDKEY|DELKEY) ([a-zA-Z0-9-.]+)$')
@@ -35,14 +40,14 @@ with rabbitdnssec.amqp_client_channel (
 	votexg  = rabbitdnssec.my_exchange ()
 	while True:
 		qhdl = chan.queue_declare (queue=key_ops, passive=True)
-		print 'qhdl.method.message_count =', qhdl.method.message_count
-		print 'Messages to retrieve:', chan.get_waiting_message_count ()
-		print 'Collecting messages from', key_ops
+		log_debug ('qhdl.method.message_count =', qhdl.method.message_count)
+		log_debug ('Messages to retrieve:', chan.get_waiting_message_count ())
+		log_debug ('Collecting messages from', key_ops)
 		clx = rabbitdnssec.MessageCollector (chan, queue=key_ops)
 		clx.collect ()
 		# cmds = '\n'.join (clx.messages ())
-		# print 'cmds <<<' + cmds + '>>>'
-		# print 'Processing commands:\n * ' + cmds.replace ('\n', '\n * ')
+		# log_debug ('cmds <<<' + cmds + '>>>')
+		# log_debug ('Processing commands:\n * ' + cmds.replace ('\n', '\n * '))
 		success = True
 		add_zones = []
 		del_zones = []
@@ -56,16 +61,16 @@ with rabbitdnssec.amqp_client_channel (
 				else:
 					raise Exception (cmd)
 			except:
-				sys.stderr.write ('Illegal key_ops command: ' + cmd + '\n')
+				log_err ('Illegal key_ops command: ' + cmd + '\n')
 				succcess = False
-		if success:
-			sys.stdout.write ('Subcommand: ' +
+		if success and len (add_zones) > 0:
+			log_info ('Subcommand: ' +
 					sys.argv [0] + '-' + backend + '-addkey ' +
 					' '.join (add_zones) + '\n')
 			exitval = os.system (sys.argv [0] + '-' + backend + '-addkey ' +
 					' '.join (add_zones))
 			success = (exitval == 0)
-		if success:
+		if success and len (del_zones) > 0:
 			votes = ' '.join ([opcode] + add_zones + del_zones)
 			chan.basic_publish (
 				exchange=votexg,
@@ -73,18 +78,20 @@ with rabbitdnssec.amqp_client_channel (
 				body=votes)
 		if success:
 			clx.ack ()
-			print 'Acknowledged all -- done!'
+			log_info ('Acknowledged all -- done!')
 			frame_method = chan.tx_commit ()
 			txfail = type (frame_method.method) != pika.spec.Tx.CommitOk
 			if txfail:
 				raise Exception ('Commit failed after processing ' + key_ops)
-			exitval = os.system ("../ods-utimaco/ods-utimaco-send")
-			if exitval == 0:
-				print 'Submitted Utimaco key store for syncing'
-			else:
-				print 'Failure while trying to sync Utimaco HSMs'
+			#TODO# Pluggable backends... or configurable command
+			if hsm_sync_cmd is not None:
+				exitval = os.system (hsm_sync_cmd)
+				if exitval == 0:
+					log_debug ('Submitted HSM key store for syncing')
+				else:
+					log_error ('Failure while trying to sync HSMs')
 		else:
 			clx.nack ()
-			print 'Failure -- will sleep for 10 minutes and retry'
+			log_error ('Failure -- will sleep for 10 minutes and retry')
 			time.sleep (600)
 

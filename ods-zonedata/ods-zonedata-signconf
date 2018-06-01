@@ -42,6 +42,7 @@ import PyKCS11
 from lxml import etree
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 # Configure as an OpenDNSSEC extension
@@ -75,14 +76,14 @@ def try_unlink (path):
 # Parse arguments
 #
 if len (sys.argv) < 2:
-	sys.stderr.write ('Usage: ' + ' zone...\n')
+	log_error ('Usage: ' + ' zone...\n')
 	sys.exit (1)
 p11libpath = rabbitdnssec.pkcs11_libfile
 tokenlabel = rabbitdnssec.pkcs11_token_label
 curvenm = rabbitdnssec.pkcs11_curve_name
 zones = sys.argv [1:]
 if curvenm not in curves.keys ():
-	sys.stderr.write ('Acceptable curve names are: ' + ', '.join (curves.keys ()) + '\n')
+	log_error ('Acceptable curve names are: ' + ', '.join (curves.keys ()) + '\n')
 	sys.exit (1)
 (dns_algid,p11_ecparams) = curves [curvenm]
 
@@ -93,7 +94,7 @@ zlf = open ('/var/opendnssec/surfdomeinen/zonelist.xml', 'r')
 zonelist_etree = etree.parse (zlf)
 zlf.close ()
 zonelist = zonelist_etree.xpath ('/ZoneList/Zone/@name')
-print 'DEBUG: zonelist is', zonelist
+log_debug ('zonelist is', zonelist)
 
 
 #
@@ -101,7 +102,7 @@ print 'DEBUG: zonelist is', zonelist
 #
 p11lib = PyKCS11.PyKCS11Lib ()
 p11lib.load (p11libpath)
-print 'Loaded PKCS #11 library', p11libpath
+log_debug ('Loaded PKCS #11 library', p11libpath)
 
 
 #
@@ -117,7 +118,7 @@ for slotid in slots:
 	if tokeninfo.label == tokenlabel:
 		slot_found = slotid
 if slot_found is None:
-	sys.stderr.write ('Failed to locate a token with label ' + tokenlabel + '\n')
+	log_error ('Failed to locate a token with label ' + tokenlabel + '\n')
 	sys.exit (1)
 
 #
@@ -145,7 +146,7 @@ for zone in zones:
 	#
 	if not zone in zonelist:
 		try_unlink (newfn)
-		print 'Made sure', newfn, 'is no longer in the current directory'
+		log_debug ('Made sure', newfn, 'is no longer in the current directory')
 		#TODO# Is "clear" indeed the desired function?
 		os.system ('ods-signer update ' + zone)
 
@@ -167,7 +168,7 @@ for zone in zones:
 	]
 	pubkeys = session.findObjects (pubtmpl)
 
-	print 'DEBUG: Found', len (pubkeys), 'public keys for', zone
+	log_debug ('Found', len (pubkeys), 'public keys for', zone)
 
 	cka_ids = []
 	for pubkey in pubkeys:
@@ -235,28 +236,19 @@ for zone in zones:
 </SignerConfiguration>
 """
 
-	print signconf
+	#SILENCED# print signconf
 
 	sc = open (tmpfn, 'w')
 	sc.write (signconf)
 	sc.close ()
 	os.rename (tmpfn, newfn)
-	print 'Written ' + newfn + ' to the current directory'
+	log_info ('Written ' + newfn + ' to the current directory')
 
 	#
 	# Hint the ods-signer that the zone may have to be re-signed
 	#
 	#TODO# Is "update" indeed the desired function? 'sign' is too strong
 	os.system ('ods-signer update ' + zone)
-
-
-#
-# Be all happy and cheerful
-#
-print
-print 'SUCCESS'
-print
-
 
 
 #

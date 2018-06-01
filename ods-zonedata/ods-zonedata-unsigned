@@ -16,18 +16,20 @@
 import os
 import sys
 
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
-sys.stderr.write ('ods-zonedata-unsigned: OUTDATED UPDATE METHOD, USE THE PARENTING EXCHANGE')
+
+log_critical ('ods-zonedata-unsigned: OUTDATED UPDATE METHOD, USE THE PARENTING EXCHANGE')
 sys.exit (1)
 
 
 if len (sys.argv) < 2:
-	sys.stderr.write ('Usage: ' + sys.argv [0] + ' zone...\n')
+	log_error ('Usage: ' + sys.argv [0] + ' zone...\n')
 	sys.exit (1)
 
 for zone in sys.argv [1:]:
 
-	print 'Constructing unsigned zone for', zone
+	log_debug ('Constructing unsigned zone for', zone)
 
 	plainzone = open ('/var/opendnssec/uploaded/' + zone + '.txt').read ()
 	try:
@@ -42,7 +44,7 @@ for zone in sys.argv [1:]:
 	tmpf.close ()
 	os.rename (tmpn, '/var/opendnssec/unsigned/' + zone + '.txt')
 
-	print 'Requesting signed zone for', zone
+	log_debug ('Requesting signed zone for', zone)
 
 	os.system ('ods-signer sign ' + zone)
 

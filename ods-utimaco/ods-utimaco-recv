@@ -17,6 +17,7 @@ import ssl
 import pika
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 pkcs11_routing_keys = [ 'pkcs11_backup', 'pkcs11_extend' ]
@@ -38,11 +39,11 @@ def process_msg (chan, mth, props, body):
 	outfh.write (body)
 	outfh.close ()
 	if os.system ('p11tool2 LoginUser=`cat ' + pkcs11_pinfile + '` RestoreExternalKeys=' + pkcs11_restorefile) != 0:
-		print 'Failure during restore of external keys from', who
+		log_err ('Failure during restore of external keys from', who)
 		chan.basic_nack (delivery_tag=mth.delivery_tag, requeue=False)
 		chan.tx_rollback ()
 	else:
-		print 'Successfully restored external keys from', who
+		log_info ('Successfully restored external keys from', who, 'in', len (body), 'bytes')
 		chan.basic_ack  (delivery_tag=mth.delivery_tag)
 		chan.tx_commit ()
 		#TODO# Possibly process failed transaction?
@@ -52,23 +53,20 @@ creds   = rabbitdnssec.my_credentials (ovr_appname='ods-utimaco')
 cnxparm = rabbitdnssec.my_connectionparameters (creds)
 props   = rabbitdnssec.my_basicproperties (ovr_username='pkcs11update')
 
-print 'Connection parameters:', cnxparm
 cnx = None
 chan = None
 try:
 	cnx = pika.BlockingConnection (cnxparm)
 	chan = cnx.channel ()
 	chan.basic_consume (process_msg, queue=queuename)
-	print 'Starting transaction'
 	chan.tx_select ()
-	print 'Basically consuming!'
 	chan.start_consuming ()
-	print 'Done consuming; committing transaction'
+	log_info ('Done consuming; committing transaction')
 except pika.exceptions.AMQPChannelError, e:
-	print 'AMQP Channel Error:', e
+	log_error ('AMQP Channel Error:', e)
 	sys.exit (1)
 except pika.exceptions.AMQPError, e:
-	print 'AMQP Error:', e
+	log_error ('AMQP Error:', e)
 	sys.exit (1)
 finally:
 	if chan is not None:

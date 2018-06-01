@@ -30,7 +30,7 @@ sidn_lock =      cfg ['registry_sidn_epplock']
 server_tuple = None
 if __name__ == '__main__':
 	if len (sys.argv) > 3:
-		sys.stderr.write ('Usage: ' + sys.argv [0] + ' [<registry> [<port>]]\n')
+		log_error ('Usage: ' + sys.argv [0] + ' [<registry> [<port>]]\n')
 		sys.exit (1)
 	try:
 		if len (sys.argv) >= 2:
@@ -40,7 +40,7 @@ if __name__ == '__main__':
 			# Override port
 			sidn_port = int (sys.argv [2])
 	except:
-		sys.stderr.write ('Registry ' + sys.argv [1] + ':' + sys.argv [2] + ' is unknown\n')
+		log_error ('Registry ' + sys.argv [1] + ':' + sys.argv [2] + ' is unknown\n')
 		sys.exit (1)
 
 
@@ -100,9 +100,7 @@ import fcntl
 # Report an error and quit with an error code
 #
 def fatal (errstr):
-        syslog (LOG_ERR, 'Fatal error: ' + errstr)
-        sys.stdout.write (errstr + '\n')
-        syslog (LOG_INFO, 'Closing shell with force')
+        log_error ('Fatal error:', errstr, '-- Closing shell with force')
         closelog ()
         sys.exit (1)
 
@@ -117,7 +115,7 @@ def runcmd (cmdline, more=False):
         if retval != 0:
                 fatal ('Error: ' + str (retval) + '\n')
         elif not more:
-                sys.stdout.write ('OK\n')
+                log_debug ('OK\n')
 
 
 #
@@ -125,7 +123,7 @@ def runcmd (cmdline, more=False):
 #
 def prompt ():
         if os.isatty (sys.stdin.fileno ()):
-                sys.stdout.write (shellname + '$ ')
+                log_debug (shellname + '$ ')
 
 
 
@@ -154,7 +152,7 @@ def connect ():
 		login (soxplus)
                 return soxplus
         except:
-                sys.stderr.write ('Failed to securely connect to server %s:%d\n' % (sidn_host,sidn_port))
+                log_error ('Failed to securely connect to server %s:%d\n' % (sidn_host,sidn_port))
                 raise
 
 #
@@ -170,13 +168,13 @@ def disconnect (sox):
 def syncio (sox, query):
         try:
                 if query:
-                        sys.stdout.write (query)  #DEBUG#
+                        #DEBUG_SHOWS_PASSWORD# sys.stdout.write (query)
                         query = struct.pack ('>L', 4 + len (query)) + query
                         sox.send (query)
                 else:
-                        sys.stdout.write ('Picking up response without sending a query\n')
+                        log_debug ('Picking up response without sending a query\n')
         except:
-                sys.stderr.write ('Failed to send message to registry server\n')
+                log_error ('Failed to send message to registry server\n')
                 raise
         try:
                 resplen = struct.unpack ('>L', sox.read (4)) [0] - 4
@@ -184,15 +182,15 @@ def syncio (sox, query):
                 xmltext = ''
                 while len (xmltext) < resplen:
                         xmltext = xmltext + sox.read (resplen - len (xmltext))
-		sys.stdout.write (xmltext)  #DEBUG#
+		#DEBUG_SHOWS_ANYTHING# sys.stdout.write (xmltext)
         except:
-                sys.stderr.write ('Failed to receive reply from registry server\n')
+                log_error ('Failed to receive reply from registry server\n')
                 raise
         try:
                 xmltree = etree.fromstring (xmltext)
                 return xmltree
         except:
-                sys.stderr.write ('Failed to parse XML:\n| ' + xmltext.replace ('\n', '\n| '))
+                log_error ('Failed to parse XML:\n| ' + xmltext.replace ('\n', '\n| '))
                 raise
 
 
@@ -512,7 +510,7 @@ def shell_session (cnx):
                         prompt ()
                         cmd = sys.stdin.readline ()
                         if cmd == '':
-                                sys.stdout.write ('exit\nOK\n')
+                                log_debug ('exit\nOK\n')
                                 break
                         if cmd == '\n' or cmd [:1] == '#':
                                 continue
@@ -533,19 +531,19 @@ def shell_session (cnx):
 				keyset = eppkeys (cnx, argv [1])
 				ctr = 0
 				for key in keyset:
-					print key.to_text ()
+					# print key.to_text ()
 					ctr = ctr + 1
-				print 'Number of KSK keys found: ', ctr
+				log_debug ('Number of KSK keys found: ', ctr)
 
                         elif argv [0] == 'help' and os.isatty (sys.stdin.fileno ()):
                                 prefix  = 'Supported commands: '
                                 for cmd in action_argcount [shellname].keys ():
-                                        sys.stdout.write (prefix + cmd)
+                                        log_debug (prefix + cmd)
                                         prefix = ', '
-                                sys.stdout.write ('\nOK\n')
+                                log_debug ('\nOK\n')
 
                         elif argv [0] == 'exit' or argv [0] == 'quit':
-                                sys.stdout.write ('OK\n')
+                                log_debug ('OK\n')
                                 moretodo = False
 
                         else:

@@ -23,6 +23,7 @@ import ssl
 import pika
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 queuename = rabbitdnssec.my_queue ('signconf_votes')
@@ -44,20 +45,20 @@ def process_msg (chan, mth, props, body):
 		elif add_del == 'DELKEY':
 			os.system ('ods-votes-' + backend + '-delkey ' + zone)
 		else:
-			print 'Invalid instruction', add_del, 'over signconf_votes'
+			log_error ('Invalid instruction', add_del, 'over signconf_votes')
 			ok = False
 		if backend == 'opendnssec':
 			# Update .signconf, creating or deleting as per zonelist.xml
 			os.system ('./ods-zonedata-signconf ' + zone)
 	except Exception, e:
-		print 'Exception:', e, 'for zone', zone
+		log_error ('Exception:', e, 'for zone', zone)
 		ok = False
 	if not ok:
-		print 'Failure while processing zonedata for ' + zone
+		log_error ('Failure while processing zonedata for ' + zone)
 		chan.basic_nack (delivery_tag=mth.delivery_tag, requeue=False)
 		chan.tx_rollback ()
 	else:
-		print 'Successfully processed zonedata update' #TODO#ZONE#
+		log_error ('Successfully processed zonedata update for ' + zone)
 		chan.basic_ack  (delivery_tag=mth.delivery_tag)
 		chan.tx_commit ()
 		#TODO# signal parent/child system about updated zonedata
@@ -66,23 +67,19 @@ creds   = rabbitdnssec.my_credentials (ovr_username='confsigner')
 cnxparm = rabbitdnssec.my_connectionparameters (creds)
 props   = rabbitdnssec.my_basicproperties (ovr_username='pkcs11update')
 
-print 'Connection parameters:', cnxparm
 cnx = None
 chan = None
 try:
 	cnx = pika.BlockingConnection (cnxparm)
 	chan = cnx.channel ()
 	chan.basic_consume (process_msg, queue=queuename)
-	print 'Starting transaction'
 	chan.tx_select ()
-	print 'Basically consuming!'
 	chan.start_consuming ()
-	print 'Done consuming; committing transaction'
 except pika.exceptions.AMQPChannelError, e:
-	print 'AMQP Channel Error:', e
+	log_error ('AMQP Channel Error:', e)
 	sys.exit (1)
 except pika.exceptions.AMQPError, e:
-	print 'AMQP Error:', e
+	log_error ('AMQP Error:', e)
 	sys.exit (1)
 finally:
 	if chan is not None:

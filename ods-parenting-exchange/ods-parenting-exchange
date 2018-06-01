@@ -97,6 +97,7 @@ from dns.rdataclass import IN
 from dns.rdatatype  import NS, DNSKEY
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 # Prepare fixed names
@@ -180,7 +181,7 @@ def parse_dnstext (dnstext, sender):
 		if token.is_eof ():
 			break
 		ttl_token = token.value.upper ()
-		print 'TTL is', ttl_token
+		log_debug ('TTL is', ttl_token)
 		ttl = dns.ttl.from_text (ttl_token)
 		# Parse the class #TODO# Maybe match prior
 		cls_token = tizer.get ().value.upper ()
@@ -290,7 +291,7 @@ class ParentingExchange (object):
 		         though not all parents may like DS records;
 		         notably SIDN, the .nl registrar, requires DNSKEYs.
 		"""
-		print 'Announcing', self.dnskeys, 'routed as', self.zone_name
+		log_debug ('Announcing', self.dnskeys, 'routed as', self.zone_name)
 		self.chan.basic_publish (exchange=exchange_name,
 				routing_key=self.zone_name,
 				body=self.dnskeys)
@@ -311,8 +312,7 @@ class ParentingExchange (object):
 					'3600 IN DNSKEY ' + k,
 						dnskeys)
 			dnskeys = ''.join (dnskeys).strip ()
-			print 'Found for', zone + ':'
-			print dnskeys
+			log_debug ('Found for', zone + ':', dnskeys)
 			#TODO# Announce by submission of the keys to any listeners
 		except:
 			dnskeys = ''
@@ -338,13 +338,13 @@ class ParentingExchange (object):
 			return
 		all_ds = []
 		for (czone,ckeys) in self.child_dnskeys.items ():
-			print 'DEBUG: child zone', czone, 'offers', ckeys
+			log_debug ('child zone', czone, 'offers', ckeys)
 			tizer = dns.tokenizer.Tokenizer (ckeys, czone)
 			token = tizer.get ()
 			if token.is_eof ():
 				break
 			ttl_token = token.value.upper ()
-			print 'TTL is', ttl_token
+			log_debug ('TTL is', ttl_token)
 			ttl = dns.ttl.from_text (ttl_token)
 			# Parse the class #TODO# Maybe match prior
 			cls_token = tizer.get ().value.upper ()
@@ -355,13 +355,13 @@ class ParentingExchange (object):
 			typ = dns.rdatatype.from_text (typ_token)
 			assert (typ == DNSKEY)
 			cdnskey = dns.rdtypes.ANY.DNSKEY.DNSKEY.from_text (IN, DNSKEY, tizer)
-			print 'DEBUG: cdnskey =', cdnskey, '::', type (cdnskey)
+			log_debug ('cdnskey =', cdnskey, '::', type (cdnskey))
 			czname = dns.name.from_text (czone)
 			dsalg = 'SHA256' #TODO#FIXED#
 			cds = dns.dnssec.make_ds (czname, cdnskey, dsalg)
-			print 'DEBUG: cds =', cds, '::', type (cds)
+			log_debug ('cds =', cds, '::', type (cds))
 			cds = [ czone + '.\t3600\tIN\tDS\t' + c for c in cds.to_text ().split ('\n') if c != '' ]
-			print 'DEBUG: cds =', cds, '::', type (cds)
+			log_debug ('cds =', cds, '::', type (cds))
 			all_ds = all_ds + cds
 		all_ds.sort ()  # Reproducible text #TODO# Bump SOA serial...
 		ds_text = '\n'.join (all_ds)
@@ -370,7 +370,7 @@ class ParentingExchange (object):
 		zone_text += '\n; Parenting adds:\n\n' + ds_text + '\n'
 		presig_path = unsigned_file (self.zone_name)
 		signed_path =   signed_file (self.zone_name)
-		print 'DEBUG: Writing changed zone for', self.zone_name
+		log_debug ('Writing changed zone for', self.zone_name)
 		outfd = open (presig_path + '.prepublish', 'w')
 		outfd.write (zone_text)
 		outfd.close ()
@@ -380,12 +380,12 @@ class ParentingExchange (object):
 		except:
 			#MOVED#OUT# backendmod.zone_add (self.zone_name, sign_path)
 			have_zone = False
-			print 'Have no signed zone file in', signed_path
+			log_error ('Have no signed zone file in', signed_path)
 		if have_zone and not remove:
 			backendmod.zone_update (self.zone_name, presig_path + '.prepublish', signed_path)
 			try:
 				#TODO#TMP# os.unlink (presig_path + '.prepublish')
-				print 'DEBUG:TODO: Temporarily keeping ' + presig_path + '.prepublish'
+				log_debug ('Temporarily keeping ' + presig_path + '.prepublish')
 			except OSError, oe:
 				if oe.errno != 2:
 					raise
@@ -431,8 +431,8 @@ class ParentingExchange (object):
 					continue
 				opt_ns = node.get_rdataset (rdclass=IN, rdtype=NS)
 				if opt_ns is not None:
-					print 'DEBUG: ns_name =', str (nm) + ' for ', self.zone_name, 'opt_ns =', opt_ns, '::', type (opt_ns)
-					print 'DEBUG: origin =', self.zone_name, '::', type (self.zone_name)
+					log_debug ('ns_name =', str (nm) + ' for ', self.zone_name, 'opt_ns =', opt_ns, '::', type (opt_ns))
+					log_debug ('origin =', self.zone_name, '::', type (self.zone_name))
 					absrr = opt_ns.to_text (origin=zone_nobj, relativize=False)
 					if nm.is_absolute ():
 						absnm = nm.to_text ()
@@ -499,7 +499,7 @@ class ParentingExchange (object):
 		elif rkey [-len (zone)-1:] == '.' + zone:
 			# Information from a child zone...
 			#  1. When DNKSEY, store it, publish if we also have an NS
-			print 'Got DNSKEY (I suspect) in', body, 'routed as', rkey
+			log_info ('Got DNSKEY (I suspect) in', body, 'routed as', rkey)
 			(ttl,cls,typ,rrds) = parse_dnstext (body, rkey)
 			#DEBUG# print 'Done parsing'
 			if typ == 'DNSKEY':
@@ -539,7 +539,7 @@ def update_parenting_exchange (zone_name):
 #
 
 def cb_uploaded_hint (chan, mth, _props, body):
-	print 'DEBUG: parenting exchange will be hinted to update zone', body
+	log_debug ('parenting exchange will be hinted to update zone', body)
 	update_parenting_exchange (zone_name=body)
 	chan.basic_ack (mth.delivery_tag)
 
@@ -550,23 +550,19 @@ def cb_uploaded_hint (chan, mth, _props, body):
 
 creds   = rabbitdnssec.my_credentials (ovr_username='parenting')
 cnxparm = rabbitdnssec.my_connectionparameters (creds)
-print 'Connection parameters:', cnxparm
 cnx = None
 chan = None
 try:
 	cnx = pika.BlockingConnection (cnxparm)
 	chan = cnx.channel ()
 	#TODO:CLASS# chan.basic_consume (process_msg, queue=queue_name)
-	#TODO:NOTHERE# print 'Starting transaction'
 	#TODO:NOTHERE# chan.tx_select ()
-	#TODO:CLASS# print 'Basically consuming!'
 	#TODO:CLASS# chan.start_consuming ()
-	#TODO:CLASS# print 'Done consuming; committing transaction'
 except pika.exceptions.AMQPChannelError, e:
-	print 'AMQP Channel Error:', e
+	log_error ('AMQP Channel Error:', e)
 	sys.exit (1)
 except pika.exceptions.AMQPError, e:
-	print 'AMQP Error:', e
+	log_error ('AMQP Error:', e)
 	sys.exit (1)
 #TODO:BELOW# finally:
 #TODO:BELOW# 	if chan is not None:

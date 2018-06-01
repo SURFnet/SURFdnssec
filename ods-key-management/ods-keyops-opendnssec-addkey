@@ -53,6 +53,7 @@ import getpass
 import PyKCS11
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 #
@@ -88,14 +89,14 @@ def int2bcd (intval, bcdcount):
 # Parse arguments
 #
 if len (sys.argv) < 2:
-	sys.stderr.write ('Usage: ' + ' zone...\n')
+	log_error ('Usage: ' + ' zone...\n')
 	sys.exit (1)
 p11libpath = rabbitdnssec.pkcs11_libfile
 tokenlabel = rabbitdnssec.pkcs11_token_label
 curvenm = rabbitdnssec.pkcs11_curve_name
 zones = sys.argv [1:]
 if curvenm not in curves.keys ():
-	sys.stderr.write ('Acceptable curve names are: ' + ', '.join (curves.keys ()) + '\n')
+	log_error ('Acceptable curve names are: ' + ', '.join (curves.keys ()) + '\n')
 	sys.exit (1)
 (dns_algid,p11_ecparams) = curves [curvenm]
 
@@ -105,7 +106,7 @@ if curvenm not in curves.keys ():
 #
 p11lib = PyKCS11.PyKCS11Lib ()
 p11lib.load (p11libpath)
-print 'Loaded PKCS #11 library', p11libpath
+log_info ('Loaded PKCS #11 library', p11libpath)
 
 #
 # Find slots, tokens, and pick the desired one
@@ -120,7 +121,7 @@ for slotid in slots:
 	if tokeninfo.label == tokenlabel:
 		slot_found = slotid
 if slot_found is None:
-	sys.stderr.write ('Failed to locate a token with label ' + tokenlabel + '\n')
+	log_error ('Failed to locate a token with label ' + tokenlabel + '\n')
 	sys.exit (1)
 
 #
@@ -155,7 +156,7 @@ for zone in zones:
 	salt = ''.join ([ chr (int (prng.uniform (0, 256))) for i in range(16) ])
 	xtid = ''.join ([ chr (int (prng.uniform (0, 256))) for i in range( 4) ])
 	cka_id = cka_id + xtid
-	print 'CKA_ID starting with BCD value is', cka_id.encode ('hex')
+	log_debug ('CKA_ID starting with BCD value is', cka_id.encode ('hex'))
 
 	#
 	# Prepare the Public and Private Key Templates
@@ -190,17 +191,7 @@ for zone in zones:
 	#
 	ckm_ecdsa = PyKCS11.Mechanism (PyKCS11.CKM_ECDSA_KEY_PAIR_GEN, None)
 	(pubkey, privkey) = session.generateKeyPair (pubtmpl, privtmpl, ckm_ecdsa)
-	print 'The key pair was generated for', zone
-
-
-
-#
-# Be all happy and cheerful
-#
-print
-print 'SUCCESS'
-print
-
+	log_info ('The key pair was generated for', zone)
 
 
 #

@@ -14,6 +14,10 @@
 import os
 
 
+import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
+
+
 def addzone (zone):
 	# Ensure that a zone is served by Knot DNS.
 	# Note: Key setup and DNSSEC signing is orthogonally setup;
@@ -39,7 +43,7 @@ def addzone (zone):
 		try:
 			knot_presig = '/var/opendnssec/signed/' + zone + '.txt'
 			knot_signed = '/var/opendnssec/signed/' + zone + '.txt'
-			print 'Writing to', knot_presig
+			log_debug ('Writing to', knot_presig)
 			fd = open (knot_presig, 'w')
 			fd.write (zone + ' 300 IN SOA ns1.' + zone + ' dns-beheer.' + zone + ' 0 300 300 300 300\n')
 			fd.write (zone + ' 300 IN TXT "TODO" "Need actual content"\n')
@@ -56,8 +60,7 @@ def addzone (zone):
 	else:
 		if rv0==0:
 			os.system ('knotc conf-abort')
-		#TODO# Report that Knot DNS could not add zone
-		print 'TODO: ERROR: Knot DNS could not add zone', zone, '(%d,%d,%d)' % (rv0,rv1,rv2)
+		log_error ('Knot DNS could not add zone', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
 
 def delzone (zone):
 	# Remove a zone from Knot DNS, so it is no longer served.
@@ -84,6 +87,5 @@ def delzone (zone):
 	else:
 		if rv0==0:
 			os.system ('knotc conf-abort')
-		#TODO# Report that Knot DNS could not delete zone
-		print 'TODO: ERROR: Knot DNS could not delete zone', zone, '(%d,%d,%d)' % (rv0,rv1,rv2)
+		log_error ('Knot DNS could not delete zone', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
 

@@ -20,6 +20,7 @@ import sys
 
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 # Determine the signing algorithm to use for newly added keys
@@ -34,7 +35,7 @@ else:
 
 # Parse cmdline args
 if len (sys.argv) < 2:
-	sys.stderr.write ('Usage: ' + sys.argv [0] + ' zone...\n')
+	log_error ('Usage: ' + sys.argv [0] + ' zone...\n')
 	sys.exit (1)
 zones = sys.argv [1:]
 
@@ -59,7 +60,7 @@ def dnssec_strip (zone):
 	rv1 = 0
 	rv2 = 0
 	if rv0==0:
-		#DEBUG# print 'knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\'' + ' > "' + signedzonefile + '"'
+		log_debug ('knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\'' + ' > "' + signedzonefile + '"')
 		rv1 = os.system ('knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\'' + ' > "' + signedzonefile + '"')
 	if rv0==0 and rv1==0:
 		rv2 = os.system ('ldns-zonediff -k -S -K -N -o "' + zone + '" "' + signedzonefile + '" "' + presigzonefile + '" | knotc')
@@ -68,20 +69,20 @@ def dnssec_strip (zone):
 	except:
 		pass
 	if rv0==0 and rv1==0 and rv2==0:
-		print 'Succeeded with rv0 ==', rv0
-		print 'knotc zone-commit "' + zone + '"'
+		log_debug ('Succeeded with rv0 ==', rv0)
+		log_debug ('knotc zone-commit "' + zone + '"')
 		if os.system ('knotc zone-commit "' + zone + '"'):
-			print 'TODO:ERROR: Failed to commit ' + zone + '; liberally assuming empty update which would upset Knot DNS...'
-			print 'knotc zone-abort "' + zone + '"'
+			log_error ('Failed to commit ' + zone + '; liberally assuming empty update which would upset Knot DNS...')
+			log_error ('knotc zone-abort "' + zone + '"')
 			os.system ('knotc zone-abort "' + zone + '"')
 		retval = 0
 	else:
-		print 'Failing with rv0 ==', rv0
+		log_error ('Failing with rv0 ==', rv0)
 		if rv0==0:
-			print 'knotc zone-abort "' + zone + '"'
+			log_debug ('knotc zone-abort "' + zone + '"')
 			os.system ('knotc zone-abort "' + zone + '"')
 		#TODO# Report that Knot DNS could not strip DNSSEC records
-		print 'TODO: ERROR: Knot DNS could not strip DNSSEC records for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2)
+		log_error ('Knot DNS could not strip DNSSEC records for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
 		retval = 1
 	return retval
 
@@ -115,7 +116,7 @@ def dnssec_disable (zone):
 		if rv0==0:
 			os.system ('knotc conf-abort')
 		#TODO# Report that Knot DNS could not disable DNSSEC
-		print 'TODO: ERROR: Knot DNS could not disable DNSSEC for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2)
+		log_error ('Knot DNS could not disable DNSSEC for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
 
 
 # Find and delete keys
@@ -125,8 +126,7 @@ for zone in zones:
 		kid = fdl.split (' ', 1) [0]
 		rv = os.system ('keymgr "' + zone + '" delete "' + kid + '"')
 		if rv != 0:
-			#TODO# Log error
-			print 'TODO: ERROR: Failed to delete key ' + kid + ' for for zone=' + zone + ' alg=' + alg
+			log_error ('railed to delete key ' + kid + ' for for zone=' + zone + ' alg=' + alg)
 	fd.close ()
 	# disable DNSSEC and strip the zone while at it
 	dnssec_disable (zone)

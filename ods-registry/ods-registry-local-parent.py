@@ -17,6 +17,7 @@ import ssl
 import pika
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 exchange_name = rabbitdnssec.my_exchange ('parenting')
@@ -30,24 +31,20 @@ def connect ():
 	# Create the queueing infrastructure for the parent exchange.
 	#
 	creds = rabbitdnssec.my_creds (ovr_username='uplink')
-	print 'Connection parameters:', cnxparm
 	intcnx = None
 	chan = None
 	try:
 		intcnx = pika.BlockingConnection (cnxparm)
 		chan = intcnx.channel ()
 		#TODO:CLASS# chan.basic_consume (process_msg, queue=queue_name)
-		#TODO:NOTHERE# print 'Starting transaction'
 		#TODO:NOTHERE# chan.tx_select ()
-		#TODO:CLASS# print 'Basically consuming!'
 		#TODO:CLASS# chan.start_consuming ()
-		#TODO:CLASS# print 'Done consuming; committing transaction'
 		return (intcnx,chan)
 	except pika.exceptions.AMQPChannelError, e:
-		print 'AMQP Channel Error:', e
+		log_error ('AMQP Channel Error:', e)
 		sys.exit (1)
 	except pika.exceptions.AMQPError, e:
-		print 'AMQP Error:', e
+		log_error ('AMQP Error:', e)
 		sys.exit (1)
 
 #
@@ -73,7 +70,7 @@ def update_keys (cnx, domain, keys):
 	(intcnx,chan) = cnx
 	dnskeys = map (lambda k: '3600 IN DNSKEY ' + k.to_text (), keys)
 	msg = ''.join (dnskeys).strip ()
-	print 'Local "registry" update with keys', msg
+	log_info ('Local "registry" update with keys', msg)
 	self.chan.basic_publish (exchange=exchange_name,
 			routing_key=domain,
 			body=msg)

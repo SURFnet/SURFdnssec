@@ -17,6 +17,7 @@ import pickle
 import pika
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 # Read configuration for this application
@@ -52,7 +53,7 @@ while True:
 
 	# Wait for the signal that we should sample zonedata
 	#
-	print 'Awaiting the trigger on the fifo', trigger_fifo
+	log_info ('Awaiting the trigger on the fifo', trigger_fifo)
 	open (trigger_fifo).read ()
 
 	# Link up to the AMQP infrastructure
@@ -83,7 +84,7 @@ while True:
 	#TODO# Detect newly added zones
 	#
 	all_keys = set (old.keys () + new.keys ())
-	print 'Zone list:', all_keys
+	log_debug ( 'Zone list:', all_keys)
 	for fn in all_keys:
 		panic = False
 		if fn [:len(zone_prefix)] != zone_prefix :
@@ -93,28 +94,28 @@ while True:
 			if fn [-len(zone_postfix):] != zone_postfix:
 				continue
 			zone = zone [-len(zone_postfix)]
-		print 'Zonefile:', fn, 'for zone', zone
+		log_debug ('Zonefile:', fn, 'for zone', zone)
 		if not new.has_key (fn):
 			# Erase from OpenDNSSEC by sending an empty key
-			print 'Removing', fn
+			log_debug ('Removing', fn)
 			zonedata = ''
 		elif old.has_key (fn) and new [fn] == old [fn]:
-			print 'No changes to', fn
+			log_debug ('No changes to', fn)
 			continue
 		else:
-			print 'Sending', fn
+			log_debug ('Sending', fn)
 			try:
 				fh = open (fn)
 				zonedata = fh.read ()
 				fh.close ()
 			except:
-				print 'Failed to load zonedata', fn, '(signaling panic)'
+				log_critical ('Failed to load zonedata', fn, '(signaling panic)')
 				panic = True
 				zonedata = None
 		try:
 			if zonedata is None:
 				raise Exception ('Failed to load zonedata')
-			print 'Uploading zone file', fn, 'sized', len (zonedata), 'bytes to', routing_key
+			log_info ('Uploading zone file', fn, 'sized', len (zonedata), 'bytes to', routing_key)
 
 			heads = { 'subject': zone }
 			props = rabbitdnssec.my_basicproperties (headers=heads)
@@ -125,21 +126,21 @@ while True:
 				mandatory=True,
 				body=zonedata
 			)
-			print 'Done sending; committing transaction'
+			log_debug ('Done sending; committing transaction')
 			frame_method = chan.tx_commit ()
 			if type (frame_method.method) == pika.spec.Tx.CommitOk:
-				print 'AMQP Transaction Succes (Delivered to all Bound Queues)'
+				log_debug ('AMQP Transaction Succes (Delivered to all Bound Queues)')
 			else:
-				print 'AMQP Transaction Failure while sending', fn, '(signaling panic)'
+				log_critical ('AMQP Transaction Failure while sending', fn, '(signaling panic)')
 				panic = True
 		except pika.exceptions.AMQPChannelError, e:
-			print 'AMQP Channel Error:', e, '(signaling panic on', fn, ')'
+			log_error ('AMQP Channel Error:', e, '(signaling panic on', fn, ')')
 			panic = True
 		except pika.exceptions.AMQPError, e:
-			print 'AMQP Error:', e, '(signaling panic on', fn, ')'
+			log_error ('AMQP Error:', e, '(signaling panic on', fn, ')')
 			panic = True
 		except Exception, e:
-			print 'General exception:', e
+			log_error ('General exception:', e)
 			panic = True
 		# In case of panic, willfully mutilate the new state
 		if panic:
@@ -159,6 +160,6 @@ while True:
 		pj.close ()
 		os.rename (pickle_jar + '.tmp', pickle_jar)
 	except:
-		print 'Failed to write new version of zonedata state to', pickle_jar
-		print 'Will resend all the AMQP messages on the next run...'
+		log_critical ('Failed to write new version of zonedata state to', pickle_jar)
+		log_info ('Will resend all the AMQP messages on the next run...')
 

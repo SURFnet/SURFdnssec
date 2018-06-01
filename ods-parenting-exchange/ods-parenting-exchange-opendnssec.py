@@ -3,6 +3,7 @@
 
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 cfg = rabbitdnssec.my_config ('opendnssec')
 upload_dir   = cfg ['upload_dir']
@@ -27,10 +28,10 @@ def signed_file (zone_name):
 #
 def signer_hint (zone_name=''):
 	cmd = 'ods-signer sign ' + zone_name
-	print 'DEBUG: Hinting signer with:', cmd
+	log_debug ('Hinting signer with:', cmd)
 	exitval = os.system (cmd)
 	if exitval != 0:
-		sys.stderr.write ('Signer hint failed: ' + cmd + '\n')
+		log_error ('Signer hint failed: ' + cmd)
 
 #TODO# CAN USE THIS OLDER CODE FOR ZONE UPDATES:
 

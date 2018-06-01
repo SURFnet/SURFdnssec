@@ -16,6 +16,7 @@
 import os
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 cfg = rabbitdnssec.my_config ('knot')
 upload_dir   = cfg ['upload_dir']
@@ -62,8 +63,7 @@ def zone_add (zone, knot_zone_file):
 		os.system ('knotc conf-commit')
 	else:
 		os.system ('knotc conf-abort')
-		#TODO# Report that Knot DNS could not add zone
-		print 'TODO: ERROR: Knot DNS could not add zone', zone
+		log_error ('Knot DNS could not add zone', zone)
 
 # Remove a zone from processing by Knot DNS
 #
@@ -82,21 +82,19 @@ def zone_del (zone):
 		os.system ('knotc conf-commit')
 	else:
 		os.system ('knotc conf-abort')
-		#TODO# Report that Knot DNS could not delete zone
-		print 'TODO: ERROR: Knot DNS could not delete zone', zone
+		log_error ('Knot DNS could not delete zone', zone)
 
 # Update a zone being processed by Knot DNS
 #
 def zone_update (zone, new_zone_file, knot_zone_file):
-	print ('CMD> ldns-zonediff -k -o "' + zone + '" "' + knot_zone_file + '" "' + new_zone_file + '" | knotc')
+	log_debug ('CMD> ldns-zonediff -k -o "' + zone + '" "' + knot_zone_file + '" "' + new_zone_file + '" | knotc')
 	os.system ('ldns-zonediff -k -o "' + zone + '" "' + knot_zone_file + '" "' + new_zone_file + '" | knotc')
 	# ignore previous result, but check the result
 	tmp_zone_file = '/tmp/' + zone
-	print ('CMD> knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\' > "' + tmp_zone_file + '"')
+	log_debug ('CMD> knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\' > "' + tmp_zone_file + '"')
 	os.system ('knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\' > "' + tmp_zone_file + '"')
-	print ('CMD> ldns-zonediff -o "' + zone + '" "' + tmp_zone_file + '" "' + new_zone_file + '"')
+	log_debug ('CMD> ldns-zonediff -o "' + zone + '" "' + tmp_zone_file + '" "' + new_zone_file + '"')
 	exitval = os.system ('ldns-zonediff -o "' + zone + '" "' + tmp_zone_file + '" "' + new_zone_file + '"')
 	if exitval != 0:
-		#TODO# Report that Knot DNS has not picked up the change (completely)
-		print 'TODO: ERROR: Knot DNS has not received/processed complete zone file update for', zone
+		log_error ('Knot DNS has not received/processed complete zone file update for', zone)
 

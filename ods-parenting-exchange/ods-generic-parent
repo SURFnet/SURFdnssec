@@ -22,6 +22,7 @@ import ssl
 import pika
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 # Load settings
@@ -44,10 +45,10 @@ def process_msg (chan, mth, props, body):
 		#DEBUG# print 'Message with body', body, '::', type (body), 'and properties', props, '::', type (props), 'method', mth, '::', type (mth), '>>', dir (mth)
 		#DEBUG# print 'Fetching zone from', mth
 		zone = mth.routing_key
-		print 'Fetched  zone', zone
+		log_info ('Fetched  zone', zone)
 		if body == '':
 			try_unlink ('/var/opendnssec/parenting/' + zone + '.0signer')
-			print 'Removed /var/opendnssec/parenting/' + zone + '.0signer'
+			log_info ('Removed /var/opendnssec/parenting/' + zone + '.0signer')
 		else:
 			# save body to new zonefile -- but not in unsigned yet
 			zf = open ('/var/opendnssec/parenting/' + zone + '.new', 'w')
@@ -56,19 +57,19 @@ def process_msg (chan, mth, props, body):
 			zf.close ()
 			os.rename ('/var/opendnssec/parenting/' + zone + '.new',
 			           '/var/opendnssec/parenting/' + zone + '.0signer')
-			print 'Created /var/opendnssec/parenting/' + zone + '.0signer'
+			log_info ('Created /var/opendnssec/parenting/' + zone + '.0signer')
 			# have zonelist entry
 		#TODO# Possibly run the parenting script on this one zone?  Change of design!
 		#TODO# os.system ('./ods-zonedata-signconf ' + zone)
 	except Exception, e:
-		print 'Exception:', e, 'for zone', zone
+		log_error ('Exception:', e, 'for zone', zone)
 		ok = False
 	if not ok:
-		print 'Failure while processing new registrar DNSKEYs for ' + zone
+		log_error ('Failure while processing new registrar DNSKEYs for ' + zone)
 		chan.basic_nack (delivery_tag=mth.delivery_tag, requeue=False)
 		chan.tx_rollback ()
 	else:
-		print 'Successfully processed new registrar DNSKEYs for ' + zone
+		log_info ('Successfully processed new registrar DNSKEYs for ' + zone)
 		chan.basic_ack  (delivery_tag=mth.delivery_tag)
 		chan.tx_commit ()
 		#TODO# signal parent/child system about updated zonedata
@@ -76,23 +77,19 @@ def process_msg (chan, mth, props, body):
 
 creds   = rabbitdnssec.my_credentials (ovr_username='registrar')
 cnxparm = rabbitdnssec.my_connectionparameters (creds)
-print 'Connection parameters:', cnxparm
 cnx = None
 chan = None
 try:
 	cnx = pika.BlockingConnection (cnxparm)
 	chan = cnx.channel ()
 	chan.basic_consume (process_msg, queue=queuename)
-	print 'Starting transaction'
 	chan.tx_select ()
-	print 'Basically consuming!'
 	chan.start_consuming ()
-	print 'Done consuming; committing transaction'
 except pika.exceptions.AMQPChannelError, e:
-	print 'AMQP Channel Error:', e
+	log_error ('AMQP Channel Error:', e)
 	sys.exit (1)
 except pika.exceptions.AMQPError, e:
-	print 'AMQP Error:', e
+	log_error ('AMQP Error:', e)
 	sys.exit (1)
 finally:
 	if chan is not None:

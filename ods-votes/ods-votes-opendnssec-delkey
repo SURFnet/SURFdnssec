@@ -41,6 +41,7 @@ import getpass
 import PyKCS11
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 #
@@ -60,7 +61,7 @@ curves = {
 # Parse arguments
 #
 if len (sys.argv) < 2:
-	sys.stderr.write ('Usage: ' + ' zone...\n')
+	log_error ('Usage: ' + ' zone...\n')
 	sys.exit (1)
 cfg = rabbitdnssec.my_config ('pkcs11')
 p11libpath = cfg ['libfile']
@@ -68,7 +69,7 @@ tokenlabel = cfg ['token_label']
 curvenm = cfg ['curve_name']
 zones = sys.argv [1:]
 if curvenm not in curves.keys ():
-	sys.stderr.write ('Acceptable curve names are: ' + ', '.join (curves.keys ()) + '\n')
+	log_error ('Acceptable curve names are: ' + ', '.join (curves.keys ()) + '\n')
 	sys.exit (1)
 (dns_algid,p11_ecparams) = curves [curvenm]
 
@@ -78,7 +79,7 @@ if curvenm not in curves.keys ():
 #
 p11lib = PyKCS11.PyKCS11Lib ()
 p11lib.load (p11libpath)
-print 'Loaded PKCS #11 library', p11libpath
+log_debug ('Loaded PKCS #11 library', p11libpath)
 
 #
 # Find slots, tokens, and pick the desired one
@@ -93,7 +94,7 @@ for slotid in slots:
 	if tokeninfo.label == tokenlabel:
 		slot_found = slotid
 if slot_found is None:
-	sys.stderr.write ('Failed to locate a token with label ' + tokenlabel + '\n')
+	log_error ('Failed to locate a token with label ' + tokenlabel + '\n')
 	sys.exit (1)
 
 #
@@ -146,20 +147,10 @@ for zone in zones:
 for (kind,tmpl,zone) in templates:
 	keys = session.findObjects (pubtmpl)
 
-	print 'DEBUG: Found', len (keys), kind, 'keys for', zone
+	log_debug ('Found', len (keys), kind, 'keys for', zone)
 	for key in keys:
 		session.destroyObject (key)
-	print 'These', kind, 'keys for', zone, 'were destroyed'
-
-
-
-#
-# Be all happy and cheerful
-#
-print
-print 'SUCCESS'
-print
-
+	log_debug ('These', kind, 'keys for', zone, 'were destroyed')
 
 
 #

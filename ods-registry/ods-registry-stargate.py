@@ -3,6 +3,8 @@
 # stargate_registry_shell.py
 # Perform DS changes as a Stargate reseller using their API
 #
+# BE CAREFUL -- this is rough initial code -- and UNTESTED CODE
+#
 # Contact: Roland van Rijswijk-Deij <roland.vanrijswijk@surfnet.nl>
 
 
@@ -20,6 +22,7 @@ import dns.rdtypes.ANY.DS
 from syslog import *
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 cfg = rabbitdnssec.my_config ('ods-registry')
 
@@ -30,12 +33,9 @@ sg_api_authkey		=	cfg ['registry_stargate_password']
 sg_api_baseurl_domains	=	cfg ['registry_stargate_api_domains']
 sg_api_baseurl_actions	=	cfg ['registry_stargate_api_actions']
 
-debug = cfg.get ('registry_stargate_debug', '') [:1] in 'yY1Oo'
-
 # Debug output
 def dbgprint(str):
-	if debug:
-		print str
+	log_debug (str)
 
 # Build Stargate API URL parameters
 def build_sg_api_params(parameters):
@@ -307,7 +307,7 @@ def disconnect (_sox):
 
 # Print status information for the specified domain
 def print_domain_status(domain):
-	print fetch_dsset(domain)
+	log_info ('Status for', domain, 'is', fetch_dsset(domain))
 
 # Main entry point for command-line use
 def main():

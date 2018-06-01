@@ -14,6 +14,8 @@ import importlib
 
 import ssl
 import json
+import syslog
+import atexit
 import configparser
 
 import pika
@@ -28,18 +30,35 @@ appname = os.path.basename (sys.argv [0])
 appcfg = configparser.ConfigParser ()
 appcfg.read ([appdir + '/config', '/etc/opendnssec/ods-amqp.config'])
 
+# Open syslog, using standard settings
+#
+
+def cleanup_syslog ():
+	syslog.syslog (syslog.LOG_INFO, 'Program exiting')
+	syslog.closelog ()
+
+syslog.openlog (appname,
+		(syslog.LOG_PERROR if sys.stderr.isatty () else 0) |
+			syslog.LOG_PID,
+		syslog.LOG_USER)
+
+syslog.syslog (syslog.LOG_INFO, 'Program starting')
+
+atexit.register (cleanup_syslog)
+
 # Setup the RabbitMQ client
 #
-signer_machine	= socket.gethostname ().split ('.') [0]
+this_machine	= socket.gethostname ().split ('.') [0]
 port		= int (appcfg ['rabbitmq'] ['port'])
 vhost		=      appcfg ['rabbitmq'] ['vhost']
 signer_cluster	=      appcfg ['rabbitmq'] ['signer_cluster']
 signer_machines	=      appcfg ['rabbitmq'] ['signer_machines'].split ()
+backup_machines =      appcfg ['rabbitmq'] ['backup_machines'].split ()
 plugindir       =      appcfg ['rabbitmq'] ['plugindir']
 ca_certs	=      appcfg ['rabbitmq'] ['ca_certs']
 backend         =      appcfg ['rabbitmq'] ['backend']
 #
-assert (signer_machine in signer_machines)
+assert ((this_machine in signer_machines) or (this_machine in backup_machines))
 assert (len (signer_machines) >= 2)
 
 # Setup for TLS
@@ -48,8 +67,8 @@ wrap_tls = True
 conf_tls = {
 	'ssl_version': ssl.PROTOCOL_TLSv1_2,
 	'ca_certs':    ca_certs,
-	'certfile':    appdir + '/ssl/certs/' + signer_machine + '.pem',
-	'keyfile':     appdir + '/ssl/private/'  + signer_machine + '.pem',
+	'certfile':    appdir + '/ssl/certs/' + this_machine + '.pem',
+	'keyfile':     appdir + '/ssl/private/'  + this_machine + '.pem',
 	'server_side': False,
 }
 
@@ -60,16 +79,52 @@ pkcs11_token_label	= appcfg ['pkcs11'] ['token_label']
 pkcs11_pinfile_path	= appcfg ['pkcs11'] ['pinfile']
 pkcs11_curve_name	= appcfg ['pkcs11'] ['curve_name']
 
+# Send messages at various levels to syslog
+#
+def log_debug (msg, *args):
+	for a in args:
+		msg = msg + ' ' + str (a)
+	syslog.syslog (syslog.LOG_DEBUG, msg)
+
+def log_info (msg, *args):
+	for a in args:
+		msg = msg + ' ' + str (a)
+	# msg = msg % tuple (map (str, args))
+	syslog.syslog (syslog.LOG_INFO, msg)
+
+def log_notice (msg, *args):
+	for a in args:
+		msg = msg + ' ' + str (a)
+	# msg = msg % tuple (map (str, args))
+	syslog.syslog (syslog.LOG_NOTICE, msg)
+
+def log_warning (msg, *args):
+	for a in args:
+		msg = msg + ' ' + str (a)
+	# msg = msg % tuple (map (str, args))
+	syslog.syslog (syslog.LOG_WARNING, msg)
+
+def log_error (msg, *args):
+	for a in args:
+		msg = msg + ' ' + str (a)
+	# msg = msg % tuple (map (str, args))
+	syslog.syslog (syslog.LOG_ERR, msg)
+
+def log_critical (msg, *args):
+	for a in args:
+		msg = msg + ' ' + str (a)
+	# msg = msg % tuple (map (str, args))
+	syslog.syslog (syslog.LOG_CRIT, msg)
 
 # Return the name of a queue on the current machine (prefix by hostname)
 #
 def my_queue (queue):
-	return signer_machine + '_' + queue
+	return this_machine + '_' + queue
 
 # Return the name of an exchange on the current machine (prefix by hostname)
 #
 def my_exchange (exchange='signer'):
-	return signer_machine + '_' + exchange
+	return this_machine + '_' + exchange
 
 # Return configuration dict for the current app from config section [APPNAME]
 # (Use ovr_appname to override the application name to something else)
@@ -120,7 +175,7 @@ def my_credentials (ovr_appname=None, ovr_username=None):
 # 
 def my_connectionparameters (my_creds):
 	return pika.ConnectionParameters (
-			host=signer_machine,
+			host=this_machine,
 			port=port,
 			virtual_host=vhost,
 			ssl=wrap_tls,
@@ -213,7 +268,7 @@ class MessageCollector (object):
 		#FAIL# print 'Length of collected messages:', len (self.msglist)
 		#FAIL# print 'Number of waiting messages:', self.chan.get_waiting_message_count ()
 		qhdl = self.chan.queue_declare (queue=self.queue, passive=True)
-		print 'qhdl.method.message_count =', qhdl.method.message_count
+		# print 'qhdl.method.message_count =', qhdl.method.message_count
 		#FAIL# return len (self.msglist) == 0 or self.chan.get_waiting_message_count () > 0
 		return len (self.msglist) == 0 or qhdl.method.message_count > 0
 
@@ -227,7 +282,7 @@ class MessageCollector (object):
 		self.empty = False
 		tout = None
 		while self.more_to_collect ():
-			print 'There is more to collect...'
+			# print 'There is more to collect...'
 			# Note: self.chan is an instance of
 			#    pika.adapters.blocking_connection.BlockingChannel
 			#    which returns (None,None,None) for an empty queue
@@ -237,11 +292,11 @@ class MessageCollector (object):
 			#FAIL# 		inactivity_timeout=tout)
 			(mth,props,body) = self.chan.basic_get (
 						queue=(queue or self.queue))
-			print 'Class MTH =', type (mth)
+			# print 'Class MTH =', type (mth)
 			#TODO# No timeout... and bad reponses when empty!
 			if type (mth) != pika.spec.Basic.GetOk:
 				#TODO# raise Exception ('Unexpectedly found empty queue "' + (queue or self.queue) + '"')
-				print 'Unexpectedly found empty queue "' + (queue or self.queue) + '"'
+				# print 'Unexpectedly found empty queue "' + (queue or self.queue) + '"'
 				time.sleep (60)
 				continue
 			self.msgtags.append (mth.delivery_tag)
@@ -257,7 +312,7 @@ class MessageCollector (object):
 			#DROP# 		pika.spec.Basic.GetEmpty,
 			#DROP# 		one_shot=True)
 			#DROP# 	regcb = True
-		print 'There is nothing more to collect'
+		pass # print 'There is nothing more to collect'
 
 	def callback_GetEmpty (self, frame):
 		"""Take note that no messages are currently available.
@@ -351,16 +406,16 @@ class amqp_client_channel ():
 				txfail = type (frame_method.method) != pika.spec.Tx.CommitOk
 		self.cnx.close ()
 		if isinstance (val, pika.exceptions.AMQPChannelError):
-			print 'AMQP Channel Error:', val
+			log_error ('AMQP Channel Error:', val)
 			sys.exit (1)
 		if isinstance (val, pika.exceptions.AMQPConnectionError):
-			print 'AMQP Connection Error:', val
+			log_error ('AMQP Connection Error:', val)
 			sys.exit (1)
 		if isinstance (val, pika.exceptions.AMQPError):
-			print 'AMQP Error:', val
+			log_error ('AMQP Error:', val)
 			sys.exit (1)
 		if self.transact:
 			if txfail:
-				print 'AMQP Transaction Failure'
+				log_error ('AMQP Transaction Failure')
 				sys.exit (1)
 

@@ -19,6 +19,7 @@ import os
 import sys
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 
@@ -32,7 +33,7 @@ else:
 
 # Parse cmdline args
 if len (sys.argv) < 2:
-	sys.stderr.write ('Usage: ' + sys.argv [0] + ' zone...\n')
+	log_error ('Usage: ' + sys.argv [0] + ' zone...\n')
 	sys.exit (1)
 zones = sys.argv [1:]
 
@@ -61,7 +62,7 @@ def dnssec_enable (zone):
 		if rv0==0:
 			os.system ('knotc conf-abort')
 		#TODO# Report that Knot DNS could not enable DNSSEC
-		print 'TODO: ERROR: Knot DNS could not enable DNSSEC for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2)
+		log_error ('Knot DNS could not enable DNSSEC for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
 
 
 # Generate keys
@@ -71,7 +72,7 @@ for zone in zones:
 	rv2 = 0
 	if rv0 != 0:
 		#TODO# Log error
-		print 'TODO: ERROR: Failed to generate key for for zone=' + zone + ' alg=' + alg
+		log_err ('Failed to generate key for for zone=' + zone + ' alg=' + alg)
 	if rv0==0:
 		dnssec_enable (zone)
 

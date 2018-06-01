@@ -19,6 +19,7 @@ import ssl
 import pika
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 cfg_pkcs11 = rabbitdnssec.my_config ('pkcs11')
@@ -31,7 +32,7 @@ port            = int (cfg_rabbit ['port'])
 
 queuenames = [ signer + '_pkcs11_backup' for signer in signer_machines ]
 
-print 'Queue names backed up from:', queuenames
+log_info ('Queue names backed up from:', queuenames)
 
 
 # The exitasap variable is set after an async exit request has fired
@@ -53,7 +54,7 @@ def process_msg (chan, method, props, body):
 	who  = props.cluster_id or 'signer-cluster'
 	what = body
 	flnm = backupdir + os.sep + who + '-' + when + '.keys'
-	print 'Writing message of', len (body), 'bytes to', flnm
+	log_info ('Writing message of', len (body), 'bytes to', flnm)
 	outfh = open (flnm, 'w')
 	outfh.write (what)
 	outfh.close ()
@@ -70,23 +71,18 @@ def try_stash (sockaddr):
 		sth_done = True
 		return process_msg (chan, method, props, body)
 	cnxparm = rabbitdnssec.my_connectionparameters (creds)
-	print 'Connection parameters:', cnxparm
 	cnx = None
 	try:
 		cnx = pika.BlockingConnection (cnxparm)
-		print 'Blocking connection:', cnx
 		chan = cnx.channel ()
-		print 'Channel:', chan
 		for qnm in queuenames:
 			chan.basic_consume (invoke_process_msg, queue=qnm)
-		print 'Basically consuming!'
 		chan.start_consuming ()
-		print 'Stopped to start consuming  :)'
 	except pika.exceptions.AMQPChannelError, e:
-		print 'AMQP Channel Error:', e
+		log_error ('AMQP Channel Error:', e)
 		sth_done = True
 	except pika.exceptions.AMQPError, e:
-		print 'AMQP Error:', e, '::', type (e)
+		log_error ('AMQP Error:', e, '::', type (e))
 		pass
 	finally:
 		if cnx is not None:
@@ -104,16 +100,15 @@ def try_stash (sockaddr):
 def listenloop ():
 	global host, port, exitasap
 	done_sth = False
-	print 'HOST =',host, ' / PORT =', port
 	hostaddrs = socket.getaddrinfo (host, port)
-	print 'Trying addresses:', hostaddrs
 	for hostaddr in hostaddrs:
 		if exitasap:
 			return done_sth
 		(fam, typ, pro, can, adr) = hostaddr
-		print 'Trying to listen to', adr
 		if try_stash (adr):
 			done_sth = True
+		else:
+			log_info ('Skipped listening to', adr)
 	return done_sth
 
 #
@@ -124,15 +119,15 @@ def mainloop ():
 	while not exitasap:
 		done_sth = listenloop ()
 		if done_sth:
-			print 'Disconnect from server.  Reconnecting.'
+			log_info ('Disconnect from server.  Reconnecting.')
 			fallback = 5
 		else:
-			print 'Connection failed on all ports.  Sleeping.'
+			log_err ('Connection failed on all ports.  Sleeping.')
 			time.sleep (fallback)
 			fallback = fallback * 2
 			if fallback > 3600:
 				fallback = 3600
-			print 'Woken up.  Reconnecting.'
+			log_debug ('Woken up.  Reconnecting.')
 
 #
 # Run the main loop
