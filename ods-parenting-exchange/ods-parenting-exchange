@@ -419,9 +419,13 @@ class ParentingExchange (object):
 		try:
 			zone_obj = dns.zone.from_file (zone_path, origin=self.zone_name, allow_include=False)
 		except IOError,ioe:
+			log_error ('IO Error', ioe.errno, 'while parsing', zone_path)
 			if ioe.errno != 2:
 				raise
 			zone_obj = None
+		except Exception, e:
+			log_error ('Exception', str (e), 'while parsing', zone_path)
+			raise
 		#
 		# Construct the new, possibly empty child_ns
 		new_ns = {}

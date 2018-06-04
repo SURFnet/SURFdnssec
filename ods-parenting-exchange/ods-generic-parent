@@ -27,7 +27,7 @@ from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error
 
 # Load settings
 #
-queuename     = rabbitdnssec.queue ('registrars')
+queuename     = rabbitdnssec.my_queue ('registrars')
 exchange_name = rabbitdnssec.my_exchange ('parenting')
 
 

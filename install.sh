@@ -84,6 +84,12 @@ do
 			echo cp -p "$f" "$PREFIX/lib/$d"
 			     cp -p "$f" "$PREFIX/lib/$d"
 			;;
+		*.service|*.target)
+			o=/lib/systemd/system/$(basename $f)
+			p=$(readlink -f "$PREFIX" | sed -e 's/[/]/\\\//g')
+			echo sed -e "s/@PREFIX@/$p/g" \< "$f" \> "$o"
+			     sed -e "s/@PREFIX@/$p/g" < "$f" > "$o"
+			;;
 		README*|readme*|*.md|*.MD|*.txt|*.TXT)
 			mkdir -p "$PREFIX/doc/$d"
 			echo cp -p "$f" "$PREFIX/doc/$d"

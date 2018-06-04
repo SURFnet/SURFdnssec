@@ -1,0 +1,12 @@
+[Unit]
+Description=DNSSEC on Utimaco Key Updates from Replicum
+After=rabbitmq-server.service
+
+[Install]
+
+[Service]
+Type = simple
+#TODO#HOME#
+Environment = PYTHONPATH=@PREFIX@/lib
+ExecStart = @PREFIX@/bin/ods-utimaco-recv
+

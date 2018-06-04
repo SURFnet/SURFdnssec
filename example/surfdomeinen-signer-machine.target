@@ -1,0 +1,13 @@
+[Unit]
+Description = DNSSEC Signer Machines -- collective service target
+Conflicts = surfdomeinendnssec-backup-machine.target
+Requires = \
+	ods-webapi-unprotected.service \
+	ods-keyops.service ods-votes-recv.service \
+	ods-utimaco-recv.service \
+	ods-zonedata-recv.service \
+	ods-parenting-exchange.service ods-generic-parent.service \
+	ods-registry.service
+
+[Install]
+

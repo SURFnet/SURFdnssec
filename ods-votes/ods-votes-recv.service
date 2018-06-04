@@ -1,0 +1,12 @@
+[Unit]
+Description=DNSSEC Voting for Key Deletion (INCOMPLETE)
+After=rabbitmq-server.service
+
+[Install]
+
+[Service]
+Type = simple
+#TODO#HOME#
+Environment = PYTHONPATH=@PREFIX@/lib PATH=@PREFIX@/bin/ods-votes
+ExecStart = @PREFIX@/bin/ods-votes-recv
+

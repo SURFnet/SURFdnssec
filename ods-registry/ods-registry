@@ -57,7 +57,7 @@ signer_ns_name = cfg_parenting ['signer_ns']
 # The (presumably fixed) TTL for the DS of each parent/TLD
 #
 parent2dsttl = { }
-for (k,v) in cfg_parenting:
+for (k,v) in cfg_parenting.items ():
 	if k [:6] == 'dsttl_':
 		parent2dsttl [k [6:]] = int (v)
 
@@ -95,7 +95,7 @@ ods_registry_lock_filename = cfg_registry ['lockfile']
 #
 # The signer backend
 #
-signermod = my_backendmod ('ods-registry-')
+signermod = rabbitdnssec.my_backendmod ('ods-registry-')
 
 
 #
@@ -120,7 +120,7 @@ default_ns.use_edns (0, 0, 4096)
 # Note: This is purely for the testing environment, where nstest hosts
 # zones but they do not reach the live resolver.
 #
-auth_ns_opt = cfg.get ('auth_ns')
+auth_ns_opt = cfg_parenting.get ('auth_ns')
 if auth_ns_opt:
 	default_auth_ns = resolver.Resolver (configure=False)
 	default_auth_ns.nameservers.append (auth_ns_opt) # + default_ns.nameservers [:]
@@ -558,24 +558,25 @@ def onepass ():
 # and handle each individually.
 #
 if __name__ == '__main__':
-	#
-	# Fork as a daemon to the background
-	pid = os.fork ()
-	if pid > 0:
-		log_debug ('Forked background daemon to', sys.argv [0], 'in PID', pid)
-		sys.exit (0)
-	os.setsid ()
-	os.close (0)
-	#TODO#print# os.close (1)
-	os.close (2)
+	#SYSTEMD# 	#
+	#SYSTEMD# 	# Fork as a daemon to the background
+	#SYSTEMD# 	pid = os.fork ()
+	#SYSTEMD# 	if pid > 0:
+	#SYSTEMD# 		log_debug ('Forked background daemon to', sys.argv [0], 'in PID', pid)
+	#SYSTEMD# 		sys.exit (0)
+	#SYSTEMD# 	os.setsid ()
+	#SYSTEMD# 	os.close (0)
+	#SYSTEMD# 	#TODO#print# os.close (1)
+	#SYSTEMD# 	os.close (2)
 	#ITSOK# raise Exception ('You should not run this on a test zone list!')
 	lockf = open (ods_registry_lock_filename, 'w')
 	#DEBUG# print 'Preparing to lock', ods_registry_lock_filename, 'via file', lockf
 	#
 	# Load registry backend modules, with None for lazy connections
+	sys.path.append (rabbitdnssec.my_plugindir ())
 	regmod_local_parent = import_module ('ods-registry-local-parent')
-	regmod_sidn = import_module ('ods-registry-sidn')
-	regmod_stargate = import_module ('ods-registry-stargate')
+	regmod_sidn         = import_module ('ods-registry-sidn')
+	regmod_stargate     = import_module ('ods-registry-stargate')
 	#THIS_IS_GLOBAL_CODE# global registries
 	registries = {
 		#TODO# Could make this depend on dynamic configuration

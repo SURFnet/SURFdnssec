@@ -30,7 +30,8 @@ queuename               = rabbitdnssec.my_queue ('zonedata')
 singer_exchange_name    = rabbitdnssec.my_exchange ()
 parenting_exchange_name = rabbitdnssec.my_exchange ('parenting')
 backend                 = rabbitdnssec.my_backend ()
-backendmod              = rabbitdnssec.my_backendmod ('ods-zonedata-recv-')
+backendmod              = rabbitdnssec.my_backendmod ('ods-zonedata-recv-',
+					ovr_appname='ods-zonedata')
 
 
 

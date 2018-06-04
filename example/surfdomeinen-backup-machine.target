@@ -1,0 +1,7 @@
+[Unit]
+Description = DNSSEC Backup Machines -- collective service target
+Conflicts = surfdomeinen-signer-machine.target
+Requires = ods-backup-stash.service
+
+[Install]
+

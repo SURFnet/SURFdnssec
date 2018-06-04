@@ -1,0 +1,12 @@
+[Unit]
+Description=DNSSEC Uplink to various Parent Registries
+After=rabbitmq-server.service
+
+[Install]
+
+[Service]
+Type = simple
+#TODO#HOME#
+Environment = PYTHONPATH=@PREFIX@/lib
+ExecStart = @PREFIX@/bin/ods-registry
+

@@ -25,7 +25,8 @@ import pika.credentials
 
 # Setup configuration, such as settings and application name
 #
-appdir = os.getenv ('HOME') + '/ods-amqp'
+homedir = os.path.expanduser ('~')
+appdir = homedir + '/ods-amqp'
 appname = os.path.basename (sys.argv [0])
 appcfg = configparser.ConfigParser ()
 appcfg.read ([appdir + '/config', '/etc/opendnssec/ods-amqp.config'])
@@ -141,6 +142,11 @@ def my_config (ovr_appname=None):
 def my_backend ():
 	return backend
 
+# Return the plugin directory for this program.
+#
+def my_plugindir (ovr_appname=None):
+	return plugindir + '/' + (ovr_appname or appname)
+
 # Return the backend module used for signing DNS zone data.
 # By default, a possible loading location is the plugin directory's
 # subdirectory named by sys.argv [0], but ovr_appname can be used to
@@ -148,8 +154,7 @@ def my_backend ():
 # the plugin directory.
 #
 def my_backendmod (modname_prefix, modname_postfix='', ovr_appname=None):
-	sys.path.append (
-			plugindir + '/' + (ovr_appname or appname) )
+	sys.path.append (my_plugindir (ovr_appname=ovr_appname))
 	backendmod = importlib.import_module (
 			modname_prefix + backend + modname_postfix )
 	sys.path.pop ()
