@@ -22,6 +22,16 @@ PREFIX=${PREFIX-../PREFIX}
 cd $(dirname "$0")
 
 
+# Test if there is a /lib/systemd/system directory
+#
+stat /lib/systemd/system/ >/dev/null 2>&1
+if [ $? -eq 0 ]
+then
+	HAVE_SYSTEMD=yes
+else
+	HAVE_SYSTEMD=no
+fi
+
 # Check settings
 #
 
@@ -32,6 +42,14 @@ case "$PREFIX" in
 	;;
 *)
 	echo 'This prefix is relative to "'"$PWD"'"'
+esac
+echo
+case "$HAVE_SYSTEMD" in
+yes)
+	echo 'I will install systemd files in /etc/systemd/system'
+	;;
+*)
+	echo 'I will not install systemd files'
 esac
 echo
 echo -n 'Is this okay? '
@@ -50,6 +68,17 @@ n*|N*)
 esac
 
 
+# Compile Python modules (which end in .py)
+#
+for src in lib/*.py ods-*/*.py
+do
+	base="${src%.py}"
+	rm -f "$base.pyc" "$base.pyo"
+	echo PYTHONPATH=lib python -m py_compile "$src"
+	PYTHONPATH=lib python -m py_compile "$src"
+done
+
+
 # Create directories
 #
 mkdir -p "$PREFIX" "$PREFIX/bin" "$PREFIX/lib" "$PREFIX/doc"
@@ -57,18 +86,21 @@ mkdir -p "$PREFIX" "$PREFIX/bin" "$PREFIX/lib" "$PREFIX/doc"
 
 # Install the rabbitdnssec.py library
 #
-echo cp -p lib/rabbitdnssec.py "$PREFIX/lib"
-     cp -p lib/rabbitdnssec.py "$PREFIX/lib"
+echo cp -p lib/rabbitdnssec.py* "$PREFIX/lib"
+     cp -p lib/rabbitdnssec.py* "$PREFIX/lib"
 
 
 # Install main-directory documentation
 #
-ls -1 README* readme* *.md *.MD *.txt *.TXT man doc/* 2>/dev/null | \
+ls -1 -d README* readme* *.md *.MD *.txt *.TXT man doc/* 2>/dev/null | \
 	sort | uniq | \
 	while read f
 	do
-		echo cp -p "$f" "$PREFIX/doc"
-		     cp -p "$f" "$PREFIX/doc"
+		if [ -n "$f" ]
+		then
+			echo cp -pr "$f" "$PREFIX/doc"
+			     cp -pr "$f" "$PREFIX/doc"
+		fi
 	done
 
 
@@ -85,10 +117,16 @@ do
 			     cp -p "$f" "$PREFIX/lib/$d"
 			;;
 		*.service|*.target)
-			o=/lib/systemd/system/$(basename $f)
-			p=$(readlink -f "$PREFIX" | sed -e 's/[/]/\\\//g')
-			echo sed -e "s/@PREFIX@/$p/g" \< "$f" \> "$o"
-			     sed -e "s/@PREFIX@/$p/g" < "$f" > "$o"
+			case "$HAVE_SYSTEMD" in
+			yes)
+				o=/lib/systemd/system/$(basename $f)
+				p=$(readlink -f "$PREFIX" | sed -e 's/[/]/\\\//g')
+				echo sed -e "s/@PREFIX@/$p/g" \< "$f" \> "$o"
+				     sed -e "s/@PREFIX@/$p/g" < "$f" > "$o"
+				;;
+			*)
+				echo "Skipping systemd file $f"
+			esac
 			;;
 		README*|readme*|*.md|*.MD|*.txt|*.TXT)
 			mkdir -p "$PREFIX/doc/$d"
