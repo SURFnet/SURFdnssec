@@ -122,7 +122,7 @@ def mainloop ():
 			log_info ('Disconnect from server.  Reconnecting.')
 			fallback = 5
 		else:
-			log_err ('Connection failed on all ports.  Sleeping.')
+			log_error ('Connection failed on all ports.  Sleeping.')
 			time.sleep (fallback)
 			fallback = fallback * 2
 			if fallback > 3600:
