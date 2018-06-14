@@ -39,7 +39,7 @@ def process_msg (chan, mth, props, body):
 	outfh.write (body)
 	outfh.close ()
 	if os.system ('p11tool2 LoginUser=`cat ' + pkcs11_pinfile + '` RestoreExternalKeys=' + pkcs11_restorefile) != 0:
-		log_err ('Failure during restore of external keys from', who)
+		log_error ('Failure during restore of external keys from', who)
 		chan.basic_nack (delivery_tag=mth.delivery_tag, requeue=False)
 		chan.tx_rollback ()
 	else:

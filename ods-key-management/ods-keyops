@@ -61,7 +61,7 @@ with rabbitdnssec.amqp_client_channel (
 				else:
 					raise Exception (cmd)
 			except:
-				log_err ('Illegal key_ops command: ' + cmd + '\n')
+				log_error ('Illegal key_ops command: ' + cmd + '\n')
 				succcess = False
 		if success and len (add_zones) > 0:
 			log_info ('Subcommand: ' +
