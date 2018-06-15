@@ -369,7 +369,7 @@ class ParentingExchange (object):
 		zone_text = open (zone_path).read ()
 		zone_text += '\n; Parenting adds:\n\n' + ds_text + '\n'
 		presig_path = unsigned_file (self.zone_name)
-		signed_path =   signed_file (self.zone_name)
+		signed_path =   signed_file (self.zone_name) # Not written
 		log_debug ('Writing changed zone for', self.zone_name)
 		outfd = open (presig_path + '.prepublish', 'w')
 		outfd.write (zone_text)

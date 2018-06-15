@@ -13,6 +13,7 @@
 
 import os
 
+import stat
 
 import rabbitdnssec
 from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
@@ -43,6 +44,7 @@ def addzone (zone):
 		try:
 			knot_presig = '/var/opendnssec/signed/' + zone + '.txt'
 			knot_signed = '/var/opendnssec/signed/' + zone + '.txt'
+			shared = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP
 			log_debug ('Writing to', knot_presig)
 			fd = open (knot_presig, 'w')
 			fd.write (zone + ' 300 IN SOA ns1.' + zone + ' dns-beheer.' + zone + ' 0 300 300 300 300\n')
@@ -50,12 +52,14 @@ def addzone (zone):
 			fd.write (zone + ' 300 IN NS ns1.todo.\n')
 			fd.write (zone + ' 300 IN NS ns2.todo.\n')
 			fd.close ()
+			os.chmod (knot_presig, shared)
 			fd = open (knot_signed, 'w')
 			fd.write (zone + ' 300 IN SOA ns1.' + zone + ' dns-beheer.' + zone + ' 0 300 300 300 300\n')
 			fd.write (zone + ' 300 IN TXT "TODO" "Need actual content"\n')
 			fd.write (zone + ' 300 IN NS ns1.todo.\n')
 			fd.write (zone + ' 300 IN NS ns2.todo.\n')
 			fd.close ()
+			os.chmod (knot_signed, shared)
 			rv2 = os.system ('knotc conf-set "zone[' + zone + '].file" "' + knot_signed + '"')
 		except:
 			rv2 = 2
