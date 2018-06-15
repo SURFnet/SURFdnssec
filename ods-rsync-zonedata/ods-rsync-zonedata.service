@@ -1,0 +1,12 @@
+[Unit]
+Description=RSync Zone Data passed into RabbitMQ
+After=rabbitmq-server.service
+
+[Install]
+
+[Service]
+Type = simple
+#TODO#HOME#
+Environment = PYTHONPATH=@PREFIX@/lib
+ExecStart = @PREFIX@/bin/ods-rsync-zonedata
+
