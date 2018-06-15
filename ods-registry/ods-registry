@@ -62,6 +62,16 @@ for (k,v) in cfg_parenting.items ():
 		parent2dsttl [k [6:]] = int (v)
 
 #
+# The plugin names configured for each of the supported parent/TLD
+#
+parent2plugin = {
+	None: 'local-parent'
+}
+for (k,v) in cfg_registry.items ():
+	if k [:7] == 'plugin_':
+		parent2plugin [k [7:]] = v
+
+#
 # The TTL for the DS if a parent zone is present locally
 #
 localdsttl = cfg_parenting ['local_dsttl']
@@ -574,18 +584,13 @@ if __name__ == '__main__':
 	#
 	# Load registry backend modules, with None for lazy connections
 	sys.path.append (rabbitdnssec.my_plugindir ())
-	regmod_local_parent = import_module ('ods-registry-local-parent')
-	regmod_sidn         = import_module ('ods-registry-sidn')
-	regmod_stargate     = import_module ('ods-registry-stargate')
-	#THIS_IS_GLOBAL_CODE# global registries
-	registries = {
-		#TODO# Could make this depend on dynamic configuration
-		None:	(regmod_local_parent,	None),
-		'nl':	(regmod_sidn,		None),
-		#DISABLED# 'com':	(regmod_stargate,	None),
-		#DISABLED# 'net':	(regmod_stargate,	None),
-		#DISABLED# 'org':	(regmod_stargate,	None),
-	}
+	#THIS_IS_ALREADY_GLOBAL_CODE# global registries
+	registries = { }
+	for (pzone,plugnm) in parent2plugin.items ():
+		plugmodnm = 'ods-registry-' + plugnm
+		log_info ('Activating plugin module ' + plugmodnm + ' for parent ' + (pzone or '(locally)'))
+		plugmod = import_module (plugmodnm)
+		registries [pzone] = (plugmod, None)
 	try:
 		fcntl.flock (lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
 		#DEBUG# print 'Exclusively locked the file for registry control'
