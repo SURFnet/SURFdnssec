@@ -1,0 +1,481 @@
+#!/usr/bin/env python
+#
+# ods-backup-prune -- Remove old backup data, summarising for retention
+#
+# This process is aware of backups files being added to the system,
+# and it immediately incorporates them into summarising files named
+# the midnight and merges files.  It also schedules removal of all
+# files.
+#
+# Midnight files merge the set of keys that cross midnight, by merging
+# all (or both) Signer machines.  This means that partitioning or
+# simply lagging behind will lead to conservatively much being retained.
+# Merges are simply the changes relative to midhight files, but these
+# are add-only changes; removal can be done at the end of a day, when
+# the next midnight file is created.
+#
+#TODO# BETTER PARSER FOR PERIODS, SUITED FOR RETAIN_HISTORIC
+#TODO# HISTORIC STORAGE WHEN CREATING MIDNIGHT SUMMARIES
+#TODO# RESPONDING TO TIMEOUTS FOR MIDNIGHT SUMMARY COMPUTING
+#TODO# CONSCIENTIOUS LOCKING OF BACKUPFILES
+#TODO# TIMER-BASED KAMIKAZE OF ON-DISK BACKUP FILES
+#TODO# INVOKE CMD_HAVE_XXX and CMD_DROP_XXX AT PROPER TIMES
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import os.path
+import re
+import time
+import re
+
+from threading import Timer
+
+import inotify.adapters
+
+import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
+
+
+# Load configuration sections
+#
+cfg_pkcs11 = rabbitdnssec.my_config ('pkcs11')
+cfg_prune  = rabbitdnssec.my_config ('ods-backup-prune')
+
+# Figure out directories to use
+#
+backup_dir  = cfg_pkcs11 ['backup_dir' ]
+summary_dir = cfg_prune.get ('summary_dir', fallback='')
+if summary_dir [:1] != '/':
+	summary_dir = os.path.abspath (backup_dir + '/' + summary_dir)
+historic_dir = cfg_prune.get ('historic_dir', fallback=summary_dir)
+if historic_dir [:1] != '/':
+	historic_dir = os.path.abspath (backup_dir + '/' + historic_dir)
+log_debug ('Setup with backup_dir =', backup_dir, 'summary_dir =', summary_dir, 'historic_dir =', historic_dir)
+
+# Test if a plugin should be loaded to accommodate an HSM file format
+#
+fileops_plugin_name = cfg_prune.get ('fileops_plugin', 'fileops-basic')
+
+
+# Parse ISO-8601 Durations.
+# Code by yee379 (thanks!) found on
+# https://stackoverflow.com/questions/25296416/how-can-i-parse-and-compare-iso-8601-durations-in-python
+#
+def iso8601_duration_as_seconds( d ):
+    if d[0] != 'P':
+        raise ValueError('Not an ISO 8601 Duration string')
+    seconds = 0
+    # split by the 'T'
+    for i, item in enumerate(d.split('T')):
+        for number, unit in re.findall( '(?P<number>\d+)(?P<period>S|M|H|D|W|Y)', item ):
+            # print '%s -> %s %s' % (d, number, unit )
+            number = int(number)
+            this = 0
+            if unit == 'Y':
+                this = number * 31557600 # 365.25
+            elif unit == 'W': 
+                this = number * 604800
+            elif unit == 'D':
+                this = number * 86400
+            elif unit == 'H':
+                this = number * 3600
+            elif unit == 'M':
+                # ambiguity ellivated with index i
+                if i == 0:
+                    this = number * 2678400 # assume 30 days
+                    # print "MONTH!"
+                else:
+                    this = number * 60
+            elif unit == 'S':
+                this = number
+            seconds = seconds + this
+    return seconds
+
+
+# Test whether to retain files
+#
+def parse_retention (type, default=None):
+	global retention
+	strval = cfg_prune.get ('retain_' + type)
+	if strval is not None:
+		retention [type] = iso8601_duration_as_seconds (strval)
+	else:
+		retention [type] = default
+
+retention = { }
+parse_retention ('keys')
+parse_retention ('midnight')
+parse_retention ('merges')
+parse_retention ('forever')
+
+#FUTURE#OPTIONS#
+#
+# cmd_have_keys = cfg_prune ['cmd_have_keys']
+# cmd_drop_keys = cfg_prune ['cmd_drop_keys']
+# cmd_have_midnight = cfg_prune ['cmd_have_midnight']
+# cmd_drop_midnight = cfg_prune ['cmd_drop_midnight']
+# cmd_have_merges = cfg_prune ['cmd_have_merges']
+# cmd_drop_merges = cfg_prune ['cmd_drop_merges']
+
+
+# Regular expressions for file names .xxx (refn_xxx) with vars (revn_xxx):
+#
+#  - YYYYMMDD-HHMMSS-SIGNERHOST.keys for the keys from Signer machines.
+#  - YYYYMMDD-000000-0.midnight for the midnight summaries.
+#  - YYYYMMDD-HHMMSS-N.merges, where N is the shortest decimal notation
+#    for an incrementing counter starting at 1, for the merges stores.
+#
+revn_keys = ['year','month','day','hour','minute','second','signerhost']
+refn_keys = re.compile ('^(20[0-9][0-9])(0[0-9]|1[0-2])([0-2][0-9]|30|31)-([0-1][0-9]|2[0-3])([0-5][0-9])([0-5][0-9])-([^\.]+)\.keys$')
+#
+revn_midnight = ['year','month','day','hour','minute','second']
+refn_midnight = re.compile ('^(20[0-9][0-9])(0[0-9]|1[0-2])([0-2][0-9]|30|31)-000000-0\.midnight$')
+#
+revn_merges = ['year','month','day','hour','minute','second','seqnr']
+refn_merges = re.compile ('(20[0-9][0-9])(0[0-9]|1[0-2])([0-2][0-9]|30|31)-([0-1][0-9]|2[0-3])([0-5][0-9])([0-5][0-9])-([1-9][0-9]*)\.merges$')
+#
+dotext2revn = {
+	'.keys': revn_keys,
+	'.midnight': revn_midnight,
+	'.merges': revn_merges
+}
+dotext2refn = {
+	'.keys': refn_keys,
+	'.midnight': refn_midnight,
+	'.merges': refn_merges
+}
+
+
+#
+# Backup File Object -- these are the things that can expire.
+#
+# Every BackupFile has a location, it may be locked because some
+# processes depend on it, and it may have an expiration timer.
+# Locking reasons are words, which collect in a list; multiple
+# entries with the same word are possible.
+#
+# A lock named "historic" may never be removed for some files.
+# A lock named "__init__" is setup when the object is created,
+# to be removed when initdone () is called on the object as
+# an indication that any other locks should now have been applied.
+# 
+# On top of that, the file has a type and is used in a manner
+# matching that.  Types are also their file name extensions,
+# so we have keys, midnight and merges.
+#
+class BackupFile ():
+
+	def __init__ (self, filename, clx):
+		"""Create a BackupFile instance for a given full path.
+		"""
+		assert (os.sep not in filename)
+		self.filename = filename
+		self.clx = clx
+		(_,dotext) = os.path.splitext (self.filename)
+		assert (dotext [:1] == '.')
+		self.type = dotext [1:]
+		assert (self.type in ['keys', 'midnight', 'merges'])
+		if self.type == 'keys':
+			self.dirname = backup_dir
+		else:
+			self.dirname = summary_dir
+		self.path = self.dirname + os.sep + filename
+		chunks = dotext2refn [dotext].match (filename).groups ()
+		self.vars = { }
+		self.vars.update (zip (dotext2revn [dotext], chunks))
+		self.locks = ['__init__']
+		self.timer = None
+		self.clx [self.filename] = self
+
+	def initdone (self):
+		"""Indicate that initialisation is done, all locks that
+		   should have been added and so it is now possible to
+		   consider any timeouts.
+		"""
+		self.unlock ('__init__')
+
+	def kamikaze (self):
+		"""Commit suicide.  Make it a bloody mess, with swords
+		   sticking out on the other end.
+		"""
+		assert (self.locks == [])
+		os.unlink (self.path)
+		del self.clx [self.filename]
+		#TODO# cripple or deref this object to stop any further use
+
+	def lock (self, name):
+		"""Set a lock by the given name.  Locks block the usual
+		   expiration processing until unlocking has commenced
+		   for all locks.  Locks are re-entrant, so they may be
+		   set multiple times and must then be unlocked just as
+		   often.
+		"""
+		if self.timer is not None:
+			self.stop_kamikaze_timer ()
+		self.locks.append (name)
+
+	def unlock (self, name):
+		"""Remove a lock by the given name.  When this removes
+		   the last lock, expiration processing may commence as
+		   configured.
+		"""
+		self.locks.remove (name)
+		if self.locks == []:
+			self.start_kamikaze_timer ()
+
+	def locks (self):
+		"""Fetch a list of locks on this BackupFile.
+		"""
+		return self.locks [:]
+
+	def setup_kamikaze_timer (self, TODO_constraints):
+		"""Configure timer operation, but do not start it yet.
+		   If one already exists, cancel and forget it first.
+		"""
+		#TODO#INLINE#
+		if self.timer is not None:
+			self.timer.cancel ()
+		self.timer = Timer (TODO_constraints)
+
+	def start_kamikaze_timer (self):
+		"""Start timer operation for this BackupFile instance.
+		"""
+		if self.timer is None:
+			#TODO#INLINE#
+			self.setup_kamikaze_timer (TODO_constraints)
+		self.timer.start ()
+
+	def stop_kamikaze_timer (self):
+		"""Stop timer operation for this BackupFile instance.
+		"""
+		assert (self.timer is not None)
+		self.timer.cancel ()
+		self.timer = None
+
+
+# Before we can start to list the backup_dir, we need to register for
+# its notifications, so we won't miss an intermittent update.  (I hope
+# this is how it works...)
+#
+i = inotify.adapters.Inotify (block_duration_s=60)  #TODO# TIMEOUT IGNORED
+i.add_watch (backup_dir)
+
+
+
+# Register with the backup_dir to immediately see future additions.
+# Iterate over the backup_dir and summary_dir, for current files.
+#
+# We do not iterate over the historic_dir, as that is output-only.
+# At best, we will tag what we find in the summaries as historic
+# files, but only when we create them will we actually link them
+# to the historic directory.  (In fact, we then create them in
+# that directory and link to the summary_dir, so we get to see it
+# if the historic data is missing or incomplete on a rerun.)
+#
+keys_fn = { }
+midnight_fn = { }
+merges_fn = { }
+last_midnight = None
+#
+for fn in os.listdir (backup_dir):
+	if refn_keys    .match (fn) is not None:
+		BackupFile (fn, keys_fn    )
+for fn in os.listdir (summary_dir):
+	if refn_midnight.match (fn) is not None:
+		BackupFile (fn, midnight_fn)
+	elif refn_merges.match (fn) is not None:
+		BackupFile (fn, merges_fn  )
+#
+log_debug ('Found', len (keys_fn), 'keys,', len (midnight_fn), 'midnights,', len (merges_fn), 'merges')
+
+
+# Find the last .midnight file stored in the system.  None means... none!
+#
+last_midnight = None
+for this_midnight in midnight_fn.keys ():
+	if last_midnight is None or last_midnight < this_midnight:
+		last_midnight = this_midnight
+log_debug ('Last midnight found is', last_midnight)
+
+
+# For each Signer machine, collect the last state preceding last_midnight.
+# Below, we will evolve this value as newer and newer .keys are incorporated,
+# which continues seemlessly into the live responsiveness when new .keys are
+# being uploaded.
+#
+# The use of knowing the last_signer2keys for each signer Machine is of
+# course to have a reference point for constructing new .midnight files
+# as well as new .merges files.
+#
+# While at it, we construct a list todo_keys, sorted and meant to be
+# considered before processing any live events for added .keys files.
+#
+last_signer2keys = { }
+todo_keys = [ ]
+for this_key in keys_fn.keys ():
+	signer = this_key [16:-5]
+	if last_midnight is None or this_key >= last_midnight:
+		# print ' * beyond last_midnight:', this_key
+		todo_keys.append (this_key)
+	elif not last_signer2keys.has_key (signer):
+		# print ' * first offer for', signer + ':', this_key
+		last_signer2keys [signer] = this_key
+	elif last_signer2keys [signer] < this_key:
+		# print ' * newer offer for', signer + ':', this_key
+		last_signer2keys [signer] = this_key
+	else:
+		# print ' * too old to consider for', signer + ':', this_key
+		pass # this_key was processed in the past
+log_debug ('Per-signer last keys up to', last_midnight, 'are', last_signer2keys)
+todo_keys.sort ()
+
+
+# Construct a new .midnight file for the next day.  The day is last_midnight
+# plus one, so not necessarily the current day!  It may be generated any time
+# and any place, is the basic idea.  It is part of the growing knowledge in
+# last_midnight, last_signer2keys and (restarts) last_seqnr.
+#
+last_seqnr = 0
+def create_midnight ():
+	global last_midnight, last_signer2keys, last_seqnr, retention
+	#
+	# Form the new variable values for last_xxx globals
+	#
+	done = time.strptime (last_midnight + ' UTC',
+				'%Y%m%d-000000-0.midnight %Z')
+	todo = time.localtime (time.mktime (done) + 86400)
+	assert (todo != done)
+	prev_midnight = last_midnight
+	last_midnight = time.strftime ('%Y%m%d-000000-0.midnight', todo)
+	# print 'Moved from', prev_midnight, 'to', last_midnight, 'or from', done, 'to', todo
+	assert (prev_midnight != last_midnight)
+	last_seqnr = 0
+	#
+	# Now produce a BackupFile for the computed last_midnight file
+	#
+	global retention, plugin
+	if retention ['midnight'] is not None:
+		#TODO# Reuse previous .midnight if old signatures
+		# last_midnight := UNION last_signer2keys.values ()
+		log_info ('Writing', last_midnight, 'as the union of', last_signer2keys.values ())
+		pass #TODO# plugin.merge (last_midnight, last_signer2keys.values ())
+
+
+# Construct a new .merges file for the current day.  The day is last_midnight,
+# so not necesssarily the current day!  It may be generated any time and any
+# place, is the basic idea.  It is part of the growing knowledge in
+# last_midnight, last_signer2keys and (updates) last_seqnr.
+#
+def create_merges (filename):
+	global last_midnight, last_signer2keys, last_seqnr, retention
+	assert (filename [-5:] == '.keys')
+	if retention ['merges'] is None:
+		return
+	#
+	# Produce a BackupFile for the desired .merges file
+	#
+	signer = filename [16:-5]
+	merges = filename [:16] + str (last_seqnr + 1) + '.merges'
+	if last_midnight is None:
+		# Cannot construct a .merges file without any base
+		return
+	elif last_seqnr == 0:
+		refpt = last_midnight
+	elif not last_signer2keys.has_key (signer):
+		refpt = last_midnight
+	elif last_signer2keys [signer] [:8] != last_midnight [:8]:
+		refpt = last_midnight
+	else:
+		refpt = last_signer2keys [signer]
+	log_info ('Writing', merges, 'as', filename, 'minus', refpt)
+	pass #TODO# plugin.diff (merges, filename, refpt)
+	#
+	# Form the new variable values for last_xxx globals
+	#
+	last_signer2keys [signer] = filename
+	last_seqnr = last_seqnr + 1
+
+
+# Process an additional .keys filename.  We initially run over todo_keys,
+# collected in the step above, but then move over to handling of live events
+# about .keys files that have just been added.
+#
+#TODO# CREATE HISTORIC FILE WHEN IT IS CALLED FOR
+#
+def process_keys (filename):
+	global last_midnight, last_signer2keys, last_seqnr, keys_fn, refn_keys
+	assert (refn_keys.match (filename))
+	assert (os.sep not in filename)
+	#
+	# Make reference of the .keys file in a BackupFile, if new.
+	#
+	if not refn_keys.match (filename):
+		if filename [-5:] == '.keys':
+			log_warning ('Skipping file because its form is wrong:', filename)
+		return
+	if not keys_fn.has_key (filename):
+		BackupFile (filename, keys_fn)
+	#
+	# Check if this is not an overtime delivery that we will
+	# have to ignore because we proceeded to a later state.
+	#
+	if filename [:8] < last_midnight [:8]:
+		log_notice ('Skipping summary processing of ' + filename + ' because we already moved on to the next day')
+		return
+	signer = filename [16:-5]
+	if last_signer2keys.has_key (signer):
+		if last_signer2keys [signer] [:16] > filename [:16]:
+			log_notice ('Skipping summary processing of ' + filename + ' because we already have newer info in ' + last_signer2keys [signer])
+	#
+	# Make sure that .midnight is up to date;
+	# then create a .merges for the new .keys file
+	#
+	while last_midnight [:8] < filename [:8]:
+		create_midnight ()
+	create_merges (filename)
+
+
+# Since process_keys must be bootstrapped with todo_keys, run over that
+# list now.  It represents the .keys files that collected while this
+# daemon was down, or at least until it last had an opportunity to write
+# a .midnight file.
+#
+for k in todo_keys:
+	process_keys (k)
+todo_keys = [ ]
+now = time.strftime ('%Y%m%d-000000-0.midnight', time.gmtime ())
+while last_midnight < now:
+	print 'Continuing until', now, 'now at', last_midnight
+	create_midnight ()
+log_debug ('Processed keys up to', last_midnight, ' and per-signer keys are now', last_signer2keys)
+
+
+# Initiation is done.  Tell this to all the BackupFile instances.
+#
+#TODO# for bf in keys_fn.values ():
+#TODO# 	bf.initdone ()
+#TODO# for bf in summary_fn.values ():
+#TODO# 	bf.initdone ()
+
+
+# Continue to process live events for added .keys files.
+# Also set timeouts for the creation of .midnight files; when we are slow
+# then even the .merges will insert them, so we should always check the
+# current data against the developed last_midnight [:8], but this is not
+# a race condition but rather allows us to create .midnight files somewhat
+# after midnight, and allow slow arrival of yesterday's .keys without
+# getting confused by quick arrival of today's .keys submissions.
+#
+for e in i.event_gen ():
+	if e is not None:
+		(header, type_names, watch_path, filename) = e
+		print 'GOT', type_names
+		if 'IN_CLOSE_WRITE' in type_names:
+			if refn_keys.match (filename):
+				process_keys (filename)
+
+# For whatever reason we want to stop.  Stop watching for events.
+#
+i.remove_watch (backup_dir)

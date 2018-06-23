@@ -53,7 +53,7 @@ def process_msg (chan, method, props, body):
 	when = time.strftime ('%Y%m%d-%H%M%S', when)
 	who  = props.cluster_id or 'signer-cluster'
 	what = body
-	flnm = backupdir + os.sep + who + '-' + when + '.keys'
+	flnm = backupdir + os.sep + when + '-' + who + '.keys'
 	log_info ('Writing message of', len (body), 'bytes to', flnm)
 	outfh = open (flnm, 'w')
 	outfh.write (what)

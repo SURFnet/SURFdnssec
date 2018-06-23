@@ -1,0 +1,11 @@
+[Unit]
+Description=DNSSEC Backup Pruning
+After=rabbitmq-server.service
+
+[Install]
+
+[Service]
+Type = simple
+Environment = PYTHONPATH=@PREFIX@/lib
+ExecStart = @PREFIX@/bin/ods-backup-prune
+

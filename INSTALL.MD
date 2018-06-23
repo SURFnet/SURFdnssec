@@ -5,6 +5,13 @@
 > all environments that run the scripts.*
 
 
+## Dependencies
+
+The code is written in Python 2.7 and is hoped to run fine on Python 3
+as well.
+
+On a Backup machine, you need to `pip install inotify`.
+
 ## Basic Installation
 
 You can install in any prefix that you like.  When you run the script
