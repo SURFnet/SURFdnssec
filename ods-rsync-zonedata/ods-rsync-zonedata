@@ -93,7 +93,9 @@ while True:
 		if len (zone_postfix) > 0:
 			if fn [-len(zone_postfix):] != zone_postfix:
 				continue
-			zone = zone [-len(zone_postfix)]
+			zone = zone [:-len(zone_postfix)]
+		if zone [-1:] == '.':
+			zone = zone [:-1]
 		log_debug ('Zonefile:', fn, 'for zone', zone)
 		if not new.has_key (fn):
 			# Erase from OpenDNSSEC by sending an empty key

@@ -22,7 +22,7 @@ import rabbitdnssec
 from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
-cfg_pkcs11 = rabbitdnssec.my_config ('pkcs11')
+cfg_pkcs11 = rabbitdnssec.my_config ()
 cfg_rabbit = rabbitdnssec.my_config ('rabbitmq')
 
 backupdir       =      cfg_pkcs11 ['backup_dir']
