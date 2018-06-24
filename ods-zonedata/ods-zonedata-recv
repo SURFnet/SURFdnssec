@@ -41,6 +41,12 @@ def try_unlink (path):
 	except:
 		pass
 
+def soa_serial (zone):
+	rd = zone.find_rdataset(name, dns.rdatatype.SOA)
+	if len (rd) != 1:
+		raise dns.zone.NoSOA ('Number of SOA records in zone apex is not one')
+	return rd [0].serial
+
 def process_msg (chan, mth, props, body):
 	zone = '<unavailable>'
 	ok = True
@@ -58,10 +64,26 @@ def process_msg (chan, mth, props, body):
 			try_unlink ('/var/opendnssec/unsigned/' + zone + '.txt')
 			try_unlink ('/var/opendnssec/uploaded/' + zone + '.txt')
 		else:
-			# save body to new zonefile -- but not in unsigned yet
-			zf = open ('/var/opendnssec/uploaded/' + zone + '.new', 'w')
-			zf.write (body)
-			zf.close ()
+			try:
+				# Let's give way to an $ORIGIN -- if one exists
+				zdnew = dns.zone.from_text (body, origin=None)
+				zone=zdnew.origin.to_text (omit_final_dot=True)
+			except dns.zone.UnknownOrigin:
+				# Fallback to the subject/filename as zone name
+				zdnew = dns.zone.from_text (body, origin=zone)
+			# except NoSOA --> missing SOA record (caught/reported below)
+			# except NoNS  --> missing NS records (caught/reported below)
+			try:
+				zdold = dns.zone.from_file ('/var/opendnssec/uploaded/' + zone + '.txt', allow_include=False)
+				soa_old = soa_serial (zdold)
+				soa_new = soa_serial (zdnew)
+				if soa_old >= soa_new:
+					raise Exception ('SOA serial ' + str (soa_new) + ' ignored; already got ' + str (soa_old))
+			except IOError, ioe:
+				# No old file, it seems.  Do not check SOA
+				pass
+			# save body to new zonefile -- but not in un/signed yet
+			zdnew.to_file ('/var/opendnssec/uploaded/' + zone + '.ew')
 			# atomically replace the zonefile in uploaded
 			os.rename ('/var/opendnssec/uploaded/' + zone + '.new',
 			           '/var/opendnssec/uploaded/' + zone + '.txt')
@@ -79,6 +101,10 @@ def process_msg (chan, mth, props, body):
 		# Update .signconf, creating or deleting as per zonelist.xml
 		if backend == 'opendnssec':
 			os.system ('./ods-zonedata-signconf ' + zone)
+	except dns.zone.NoSOA:
+		log_error ('No SOA records found in', zone)
+	except dns.zone.NoNS:
+		log_error ('No NS records found in', zone)
 	except Exception, e:
 		log_error ('Exception:', e, 'for zone', zone)
 		ok = False
