@@ -1,0 +1,123 @@
+#!/usr/bin/env python
+#
+# ods-rsync-send -- Resend data from RSync, or delete zones, over RabbitMQ
+#
+# This script forces a send over RabbitMQ of zone data as it was received
+# in the RSync upload directory.  It complains when the zone data is not
+# available (but will not delete that zone).
+#
+# To delete zones instead of submitting their data, use the --delete option
+# before listing any zones.  Note that this will take the zone offline from
+# this signer!  It is however possible with or without RSync uploaded data.
+#
+# You might send a --delete of zone data followed by a straight submission
+# of the zone data to reset its handling on this Signer machine.  This will
+# temporarily take the zone(s) offline for this Signer machine!  But it
+# also ensures that the zone data gets through all the way -- which is not
+# to be expected when zone data is repeated with the same SOA serial.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import sys
+import time
+import ssl
+import socket
+import pickle
+
+import pika
+
+import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
+
+
+# Read configuration for this application
+#
+cfg = rabbitdnssec.my_config ('ods-rsync-zonedata')
+upload_dir	= cfg ['upload_dir']
+zone_prefix	= cfg ['zone_prefix']
+zone_postfix	= cfg ['zone_postfix']
+username	= cfg ['username']
+#
+exchangename = rabbitdnssec.my_exchange ()
+routing_key = 'zonedata'
+
+
+# We shall work in the zone upload directory
+#
+os.chdir (upload_dir)
+
+
+# See if this is a --delete and if the arguments fit
+#
+if len (sys.argv) >= 2 and sys.argv [1] == '--delete':
+	delete = True
+	zones = sys.argv [2:]
+else:
+	delete = False
+	zones = sys.argv [1:]
+
+if len (zones) < 1:
+	log_error ('Attempt to run', sys.argv [0], 'without zone names')
+	sys.exit (1)
+
+# Link up to the AMQP infrastructure
+#
+creds = rabbitdnssec.my_credentials (ovr_appname='ods-rsync-zonedata')
+cnxparm = rabbitdnssec.my_connectionparameters (creds)
+cnx = None
+chan = None
+cnx = pika.BlockingConnection (cnxparm)
+chan = cnx.channel ()
+chan.tx_select ()
+
+for zone in zones:
+
+	if delete:
+		fn = '/dev/null'
+	else:
+		fn = zone_prefix + zone + zone_postfix
+	log_debug ('Zonefile:', fn, 'for zone', zone)
+
+	try:
+		fh = open (fn)
+		zonedata = fh.read ()
+		fh.close ()
+	except:
+		log_critical ('Failed to load zonedata', fn, 'for', zone, '(skipping zone)')
+		continue
+	try:
+		log_info ('Uploading zone file', fn, 'sized', len (zonedata), 'bytes to', routing_key)
+
+		heads = { 'subject': zone }
+		props = rabbitdnssec.my_basicproperties (headers=heads, ovr_appname='ods-rsync-zonedata')
+		chan.basic_publish (
+			exchange=exchangename,
+			routing_key=routing_key,
+			properties=props,
+			mandatory=True,
+			body=zonedata
+		)
+		log_debug ('Done sending; committing transaction')
+		frame_method = chan.tx_commit ()
+		if type (frame_method.method) == pika.spec.Tx.CommitOk:
+			log_debug ('AMQP Transaction Succes (Delivered to all Bound Queues)')
+		else:
+			log_critical ('AMQP Transaction Failure while sending', fn, '(signaling panic)')
+			panic = True
+	except pika.exceptions.AMQPChannelError, e:
+		log_error ('AMQP Channel Error:', e, '(signaling panic on', fn, ')')
+		continue
+	except pika.exceptions.AMQPError, e:
+		log_error ('AMQP Error:', e, '(signaling panic on', fn, ')')
+		continue
+	except Exception, e:
+		log_error ('General exception:', e)
+		continue
+if chan is not None:
+	chan = None
+if cnx is not None:
+	cnx.close ()
+cnx = None
+

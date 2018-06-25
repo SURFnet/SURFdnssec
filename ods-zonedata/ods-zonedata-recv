@@ -17,6 +17,10 @@ import sys
 import time
 import socket
 import ssl
+import re
+
+import dns
+import dns.zone
 
 import pika
 
@@ -33,6 +37,10 @@ backend                 = rabbitdnssec.my_backend ()
 backendmod              = rabbitdnssec.my_backendmod ('ods-zonedata-recv-',
 					ovr_appname='ods-zonedata')
 
+
+# The regular expression of considered-proper zone names
+#
+zone_re = re.compile ('^[-a-zA-Z0-9]+(\.[-a-zA-Z0-9]+){1,}$')
 
 
 def try_unlink (path):
@@ -67,12 +75,14 @@ def process_msg (chan, mth, props, body):
 			try:
 				# Let's give way to an $ORIGIN -- if one exists
 				zdnew = dns.zone.from_text (body, origin=None)
-				zone=zdnew.origin.to_text (omit_final_dot=True)
+				zone = zdnew.origin.to_text (omit_final_dot=True)
 			except dns.zone.UnknownOrigin:
 				# Fallback to the subject/filename as zone name
 				zdnew = dns.zone.from_text (body, origin=zone)
 			# except NoSOA --> missing SOA record (caught/reported below)
 			# except NoNS  --> missing NS records (caught/reported below)
+			if zone_re.match (zone):
+				raise Exception ('Invalid zone syntax for ' + zone)
 			try:
 				zdold = dns.zone.from_file ('/var/opendnssec/uploaded/' + zone + '.txt', allow_include=False)
 				soa_old = soa_serial (zdold)
@@ -83,7 +93,7 @@ def process_msg (chan, mth, props, body):
 				# No old file, it seems.  Do not check SOA
 				pass
 			# save body to new zonefile -- but not in un/signed yet
-			zdnew.to_file ('/var/opendnssec/uploaded/' + zone + '.ew')
+			zdnew.to_file ('/var/opendnssec/uploaded/' + zone + '.new')
 			# atomically replace the zonefile in uploaded
 			os.rename ('/var/opendnssec/uploaded/' + zone + '.new',
 			           '/var/opendnssec/uploaded/' + zone + '.txt')
@@ -111,7 +121,8 @@ def process_msg (chan, mth, props, body):
 	if not ok:
 		log_error ('Failure while processing zonedata for ' + zone)
 		chan.basic_nack (delivery_tag=mth.delivery_tag, requeue=False)
-		chan.tx_rollback ()
+		#TODO#STILL_WANT_TO_CONTINUE# chan.tx_rollback ()
+		chan.tx_commit ()
 	else:
 		log_info ('Successfully processed zonedata update for ' + zone)
 		chan.basic_ack  (delivery_tag=mth.delivery_tag)

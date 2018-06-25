@@ -89,7 +89,7 @@ def delzone (zone):
 	if rv0==0:
 		rv1 = os.system ('knotc conf-unset zone.domain "' + zone + '"')
 	if rv0==0 and rv1==0:
-		rv2 = os.system ('knotc zone-purge "' + zone + '"')
+		rv2 = os.system ('knotc -f zone-purge "' + zone + '"')
 	if rv0==0 and rv1==0 and rv2==0:
 		os.system ('knotc conf-commit')
 	else:
