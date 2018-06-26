@@ -31,6 +31,11 @@ appname = os.path.basename (sys.argv [0])
 appcfg = configparser.ConfigParser ()
 appcfg.read ([appdir + '/config', '/etc/opendnssec/ods-amqp.config'])
 
+# Recreate the prefix from sys.argv [0] and add to to $PATH
+#
+prefix = os.path.dirname (sys.argv [0])
+os.environ ['PATH'] = prefix + ':' + os.environ.get ('PATH')
+
 # Open syslog, using standard settings
 #
 

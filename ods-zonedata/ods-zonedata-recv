@@ -72,17 +72,23 @@ def process_msg (chan, mth, props, body):
 			try_unlink ('/var/opendnssec/unsigned/' + zone + '.txt')
 			try_unlink ('/var/opendnssec/uploaded/' + zone + '.txt')
 		else:
+			log_debug ('Parsing', len (body), 'bytes for', zone)
 			try:
 				# Let's give way to an $ORIGIN -- if one exists
+				log_debug ('Trying under $ORIGIN assumption')
 				zdnew = dns.zone.from_text (body, origin=None)
+				log_debug ('Did not fail on $ORIGIN assumption')
 				zone = zdnew.origin.to_text (omit_final_dot=True)
+				log_debug ('Found $ORIGIN to be', zone)
 			except dns.zone.UnknownOrigin:
 				# Fallback to the subject/filename as zone name
+				log_debug ('Trying without $ORIGIN assumption')
 				zdnew = dns.zone.from_text (body, origin=zone)
+				log_debug ('Did not fail without $ORIGIN assumption')
 			# except NoSOA --> missing SOA record (caught/reported below)
 			# except NoNS  --> missing NS records (caught/reported below)
-			if zone_re.match (zone):
-				raise Exception ('Invalid zone syntax for ' + zone)
+			if zone_re.match (zone) is None:
+				raise Exception ('Invalid zone name syntax for ' + zone)
 			try:
 				zdold = dns.zone.from_file ('/var/opendnssec/uploaded/' + zone + '.txt', allow_include=False)
 				soa_old = soa_serial (zdold)

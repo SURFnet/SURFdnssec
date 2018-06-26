@@ -13,6 +13,7 @@
 import os
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 cfg = rabbitdnssec.my_config ('ods-rsync-zonedata')
 upload_dir = cfg ['upload_dir']
@@ -21,6 +22,13 @@ trigger_fifo = cfg ['trigger_fifo']
 # /usr/bin/rsync --server --sender -vlogDtprCz . /home/portal/upload
 os.system ('/usr/bin/rsync --fake-super --server -vdc --delete . "' + upload_dir + '"')
 
-open (trigger_fifo, 'w').write ('KICK\n')
-
+try:
+	kick = os.open (trigger_fifo, os.O_WRONLY | os.O_NONBLOCK)
+	os.write (kick,'KICK\n')
+	os.close (kick)
+except OSError, ioe:
+	if ioe.errno == 6:
+		log_notice ('There is no listening ods-rsync-zonedata daemon; skipping notification for new data')
+	else:
+		raise
 
