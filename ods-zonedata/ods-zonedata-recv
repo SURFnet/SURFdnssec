@@ -40,7 +40,7 @@ backendmod              = rabbitdnssec.my_backendmod ('ods-zonedata-recv-',
 
 # The regular expression of considered-proper zone names
 #
-zone_re = re.compile ('^[-a-zA-Z0-9]+(\.[-a-zA-Z0-9]+){1,}$')
+zone_re = re.compile ('^[-a-z0-9]+(\.[-a-z0-9]+){1,}$')
 
 
 def try_unlink (path):
@@ -49,8 +49,8 @@ def try_unlink (path):
 	except:
 		pass
 
-def soa_serial (zone):
-	rd = zone.find_rdataset(name, dns.rdatatype.SOA)
+def soa_serial (zdata, zname):
+	rd = zdata.find_rdataset ('@', dns.rdatatype.SOA)
 	if len (rd) != 1:
 		raise dns.zone.NoSOA ('Number of SOA records in zone apex is not one')
 	return rd [0].serial
@@ -59,9 +59,9 @@ def process_msg (chan, mth, props, body):
 	zone = '<unavailable>'
 	ok = True
 	try:
-		log_debug ('Fetching subject from', props.headers)
-		zone = props.headers ['subject']
-		log_debug ('Fetched  subject', zone)
+		# log_debug ('Fetching subject from', props.headers)
+		zone = props.headers ['subject'].lower ()
+		# log_debug ('Fetched  subject', zone)
 		if body == '':
 			log_info ('Removing zonedata and zonelist entry for', zone)
 			# remove zonelist entry
@@ -75,37 +75,42 @@ def process_msg (chan, mth, props, body):
 			log_debug ('Parsing', len (body), 'bytes for', zone)
 			try:
 				# Let's give way to an $ORIGIN -- if one exists
-				log_debug ('Trying under $ORIGIN assumption')
+				# log_debug ('Trying under $ORIGIN assumption')
 				zdnew = dns.zone.from_text (body, origin=None)
-				log_debug ('Did not fail on $ORIGIN assumption')
+				# log_debug ('Did not fail on $ORIGIN assumption')
 				zone = zdnew.origin.to_text (omit_final_dot=True)
-				log_debug ('Found $ORIGIN to be', zone)
+				# log_debug ('Found $ORIGIN to be', zone)
 			except dns.zone.UnknownOrigin:
 				# Fallback to the subject/filename as zone name
-				log_debug ('Trying without $ORIGIN assumption')
+				# log_debug ('Trying with $ORIGIN set to', zone)
 				zdnew = dns.zone.from_text (body, origin=zone)
-				log_debug ('Did not fail without $ORIGIN assumption')
+				# log_debug ('Did not fail with $ORIGIN set to', zone)
 			# except NoSOA --> missing SOA record (caught/reported below)
 			# except NoNS  --> missing NS records (caught/reported below)
 			if zone_re.match (zone) is None:
 				raise Exception ('Invalid zone name syntax for ' + zone)
 			try:
-				zdold = dns.zone.from_file ('/var/opendnssec/uploaded/' + zone + '.txt', allow_include=False)
-				soa_old = soa_serial (zdold)
-				soa_new = soa_serial (zdnew)
+				have_old = True
+				zdold = dns.zone.from_file ('/var/opendnssec/uploaded/' + zone + '.txt', origin=zone, allow_include=False)
+				# log_debug ('Loaded old version of', zone)
+				soa_old = soa_serial (zdold, zone)
+				soa_new = soa_serial (zdnew, zone)
+				log_debug ('Request to migrate SOA serial for', zone, 'from', soa_old, 'to', soa_new)
 				if soa_old >= soa_new:
+					# log_warning ('SOA serial ' + str (soa_new) + ' ignored; already got ' + str (soa_old))
 					raise Exception ('SOA serial ' + str (soa_new) + ' ignored; already got ' + str (soa_old))
 			except IOError, ioe:
 				# No old file, it seems.  Do not check SOA
-				pass
+				have_old = False
 			# save body to new zonefile -- but not in un/signed yet
 			zdnew.to_file ('/var/opendnssec/uploaded/' + zone + '.new')
 			# atomically replace the zonefile in uploaded
 			os.rename ('/var/opendnssec/uploaded/' + zone + '.new',
 			           '/var/opendnssec/uploaded/' + zone + '.txt')
 			# have zonelist entry
-			log_info ('Having zonedata and zonelist entry for', zone)
-			backendmod.addzone (zone)
+			if not have_old:
+				log_info ('Adding zonedata and zonelist entry for', zone)
+				backendmod.addzone (zone)
 			#TODO# DEPRECATED -- generate composite zone by adding parenting data
 			#TODO# DEPRECATED -- os.system ('ods-zonedata-unsigned ' + zone)
 			#TODO# DEPRECATED -- instead send a message to the parenting exchange

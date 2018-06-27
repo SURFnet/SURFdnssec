@@ -90,6 +90,7 @@ while True:
 		if fn [:len(zone_prefix)] != zone_prefix :
 			continue
 		zone = fn [len(zone_postfix):]
+		zone = zone.lower ()
 		if len (zone_postfix) > 0:
 			if fn [-len(zone_postfix):] != zone_postfix:
 				continue
