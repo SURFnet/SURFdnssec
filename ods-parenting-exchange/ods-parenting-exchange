@@ -88,6 +88,7 @@ import os
 import sys
 import socket
 import ssl
+import re
 
 import pika
 
@@ -98,6 +99,11 @@ from dns.rdatatype  import NS, DNSKEY
 
 import rabbitdnssec
 from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
+
+
+# The regular expression of considered-proper zone names
+#
+zone_re = re.compile ('^[-a-zA-Z0-9]+(\.[-a-zA-Z0-9]+){1,}$')
 
 
 # Prepare fixed names
@@ -462,7 +468,7 @@ class ParentingExchange (object):
 					del self.child_dnskeys [absnm]
 				self.chan.basic_publish (exchange=exchange_name,
 						routing_key=absnm,
-						dnskeys='')
+						body='')
 		#
 		#TODO# WHEN/HOW TO ANNOUNCE DNSKEY RRSET IN ZONE APEX???
 		#
@@ -530,7 +536,9 @@ class ParentingExchange (object):
 
 def update_parenting_exchange (zone_name):
 	global parenting_exchange
-	if parenting_exchange.has_key (zone_name):
+	if not zone_re.match (zone_name):
+		log_error ('Parenting Exchange does not support zone syntax for', zone_name)
+	elif parenting_exchange.has_key (zone_name):
 		parenting_exchange [zone_name].update_uploaded ()
 	else:
 		parenting_exchange [zone_name] = ParentingExchange (chan, zone_name)
