@@ -7,6 +7,6 @@ After=rabbitmq-server.service
 [Service]
 Type = simple
 #TODO#HOME#
-Environment = PYTHONPATH=@PREFIX@/lib PATH=@PREFIX@/bin/ods-votes:@PREFIX@/bin
+Environment = PYTHONPATH=@PREFIX@/lib PATH=@PREFIX@/bin/ods-votes:@PREFIX@/bin:$PATH
 ExecStart = @PREFIX@/bin/ods-votes-recv
 
