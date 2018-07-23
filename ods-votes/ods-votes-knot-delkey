@@ -110,8 +110,8 @@ def dnssec_disable (zone):
 		log_error ('Knot DNS could not disable DNSSEC for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
 
 
-print 'CMD> keymgr -C /var/lib/knot/confdb ' + zone + ' delete ' + keyid
-status = os.system ('keymgr -C /var/lib/knot/confdb ' + zone + ' delete ' + keyid)
+print 'CMD> /usr/sbin/keymgr -C /var/lib/knot/confdb ' + zone + ' delete ' + keyid
+status = os.system ('/usr/sbin/keymgr -C /var/lib/knot/confdb ' + zone + ' delete ' + keyid)
 if status != 0:
 	log_error ('Failed to delete key ' + keyid + ' for zone ', zone)
 	log_error ('In spite of lingering key, disabling DNSSEC for zone', zone)

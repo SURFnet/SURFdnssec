@@ -40,7 +40,7 @@ if len (sys.argv) < 2:
 zones = sys.argv [1:]
 
 for zone in zones:
-	fd = os.popen ('keymgr -C /var/lib/knot/confdb "' + zone + '" list')
+	fd = os.popen ('/usr/sbin/keymgr -C /var/lib/knot/confdb "' + zone + '" list')
 	for fdl in fd:
 		kid = fdl.split (' ', 1) [0]
 		log_info ('Requesting zone', zone, 'removal of key pair', kid)

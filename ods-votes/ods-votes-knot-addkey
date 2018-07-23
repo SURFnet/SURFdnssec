@@ -58,8 +58,8 @@ def dnssec_enable (zone):
 		log_error ('Knot DNS could not enable DNSSEC for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
 
 
-print 'CMD> keymgr -C /var/lib/knot/confdb ' + zone + ' import-pkcs11 ' + keyid + ' ksk=yes zsk=yes'
-status = os.system ('keymgr -C /var/lib/knot/confdb ' + zone + ' import-pkcs11 ' + keyid + ' ksk=yes zsk=yes')
+print 'CMD> /usr/sbin/keymgr -C /var/lib/knot/confdb ' + zone + ' import-pkcs11 ' + keyid + ' ksk=yes zsk=yes'
+status = os.system ('/usr/sbin/keymgr -C /var/lib/knot/confdb ' + zone + ' import-pkcs11 ' + keyid + ' ksk=yes zsk=yes')
 
 if status != 0:
 	log_error ('Failed to import zone', zone, 'key', keyid, 'from PKCS #11')
