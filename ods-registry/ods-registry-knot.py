@@ -14,7 +14,7 @@ import os
 def zonenames ():
 	#
 	# Run knotc to retrieve zone names
-	zlist = os.popen ('knotc conf-read zone.domain', 'r')
+	zlist = os.popen ('/usr/sbin/knotc conf-read zone.domain', 'r')
 	#
 	# Collect the zone names mentioned in the zone list
 	workset = set ()

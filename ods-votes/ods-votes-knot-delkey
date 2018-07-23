@@ -47,31 +47,31 @@ def dnssec_strip (zone):
 	#
 	signedzonefile = '/tmp/dnssec_strip.zone'  # we need a name...
 	presigzonefile = '/var/opendnssec/unsigned/' + zone + '.txt'
-	rv0 = os.system ('knotc zone-begin "' + zone + '"')
+	rv0 = os.system ('/usr/sbin/knotc zone-begin "' + zone + '"')
 	rv1 = 0
 	rv2 = 0
 	if rv0==0:
-		log_debug ('knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\'' + ' > "' + signedzonefile + '"')
-		rv1 = os.system ('knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\'' + ' > "' + signedzonefile + '"')
+		log_debug ('/usr/sbin/knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\'' + ' > "' + signedzonefile + '"')
+		rv1 = os.system ('/usr/sbin/knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\'' + ' > "' + signedzonefile + '"')
 	if rv0==0 and rv1==0:
-		rv2 = os.system ('ldns-zonediff -k -S -K -N -o "' + zone + '" "' + signedzonefile + '" "' + presigzonefile + '" | knotc')
+		rv2 = os.system ('ldns-zonediff -k -S -K -N -o "' + zone + '" "' + signedzonefile + '" "' + presigzonefile + '" | /usr/sbin/knotc')
 	try:
 		pass #TODO#DEBUG# os.unlink (signedzonefile)
 	except:
 		pass
 	if rv0==0 and rv1==0 and rv2==0:
 		log_debug ('Succeeded with rv0 ==', rv0)
-		log_debug ('knotc zone-commit "' + zone + '"')
-		if os.system ('knotc zone-commit "' + zone + '"'):
+		log_debug ('/usr/sbin/knotc zone-commit "' + zone + '"')
+		if os.system ('/usr/sbin/knotc zone-commit "' + zone + '"'):
 			log_error ('Failed to commit ' + zone + '; liberally assuming empty update which would upset Knot DNS...')
-			log_error ('knotc zone-abort "' + zone + '"')
-			os.system ('knotc zone-abort "' + zone + '"')
+			log_error ('/usr/sbin/knotc zone-abort "' + zone + '"')
+			os.system ('/usr/sbin/knotc zone-abort "' + zone + '"')
 		retval = 0
 	else:
 		log_error ('Failing with rv0 ==', rv0)
 		if rv0==0:
-			log_debug ('knotc zone-abort "' + zone + '"')
-			os.system ('knotc zone-abort "' + zone + '"')
+			log_debug ('/usr/sbin/knotc zone-abort "' + zone + '"')
+			os.system ('/usr/sbin/knotc zone-abort "' + zone + '"')
 		#TODO# Report that Knot DNS could not strip DNSSEC records
 		log_error ('Knot DNS could not strip DNSSEC records for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
 		retval = 1
@@ -88,7 +88,7 @@ def dnssec_disable (zone):
 	# zone file, but without signatures.  We must however take
 	# action to remove these signatures and NSEC/3 data.
 	#
-	rv0 = os.system ('knotc conf-begin')
+	rv0 = os.system ('/usr/sbin/knotc conf-begin')
 	rv1 = 0
 	rv2 = 0
 	if rv0==0:
@@ -96,16 +96,16 @@ def dnssec_disable (zone):
 		#
 		# Note how silly: conf-get will return without error but unset
 		# will report an error when a feature was previously unknown!
-		rv1 = os.system ('knotc conf-unset "zone[' + zone + '].dnssec-signing"')
+		rv1 = os.system ('/usr/sbin/knotc conf-unset "zone[' + zone + '].dnssec-signing"')
 		if rv1 != 0:
 			rv1 = 0
 	if rv0==0 and rv1==0:
 		rv2 = dnssec_strip (zone)
 	if rv0==0 and rv1==0 and rv2==0:
-		os.system ('knotc conf-commit')
+		os.system ('/usr/sbin/knotc conf-commit')
 	else:
 		if rv0==0:
-			os.system ('knotc conf-abort')
+			os.system ('/usr/sbin/knotc conf-abort')
 		#TODO# Report that Knot DNS could not disable DNSSEC
 		log_error ('Knot DNS could not disable DNSSEC for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
 

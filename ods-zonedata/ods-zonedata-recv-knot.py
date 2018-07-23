@@ -33,13 +33,13 @@ def addzone (zone):
 	# a hint when we add a zone though, so it can append any child
 	# name server records as soon as we add the zone.
 	#
-	rv0 = os.system ('knotc conf-begin')
+	rv0 = os.system ('/usr/sbin/knotc conf-begin')
 	rv1 = 0
 	rv2 = 0
 	if rv0==0:
-		os.system ('knotc conf-set zone.domain "' + zone + '"')
+		os.system ('/usr/sbin/knotc conf-set zone.domain "' + zone + '"')
 		# Ignore the result; the zone may already exist; check that
-		rv1 =  os.system ('knotc conf-get "zone[' + zone + ']"')
+		rv1 =  os.system ('/usr/sbin/knotc conf-get "zone[' + zone + ']"')
 	if rv0==0 and rv1==0:
 		try:
 			knot_presig = '/var/opendnssec/signed/' + zone + '.txt'
@@ -60,14 +60,14 @@ def addzone (zone):
 			fd.write (zone + '. 300 IN NS ns2.todo.\n')
 			fd.close ()
 			os.chmod (knot_signed, shared)
-			rv2 = os.system ('knotc conf-set "zone[' + zone + '].file" "' + knot_signed + '"')
+			rv2 = os.system ('/usr/sbin/knotc conf-set "zone[' + zone + '].file" "' + knot_signed + '"')
 		except:
 			rv2 = 2
 	if rv0==0 and rv1==0 and rv2==0:
-		os.system ('knotc conf-commit')
+		os.system ('/usr/sbin/knotc conf-commit')
 	else:
 		if rv0==0:
-			os.system ('knotc conf-abort')
+			os.system ('/usr/sbin/knotc conf-abort')
 		log_error ('Knot DNS could not add zone', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
 
 def delzone (zone):
@@ -83,17 +83,17 @@ def delzone (zone):
 	# we need, at minimum, the SOA record).  The parenting exchange
 	# needs no hint when we delete a zone.
 	#
-	rv0 = os.system ('knotc conf-begin')
+	rv0 = os.system ('/usr/sbin/knotc conf-begin')
 	rv1 = 0
 	rv2 = 0
 	if rv0==0:
-		rv1 = os.system ('knotc conf-unset zone.domain "' + zone + '"')
+		rv1 = os.system ('/usr/sbin/knotc conf-unset zone.domain "' + zone + '"')
 	if rv0==0 and rv1==0:
-		rv2 = os.system ('knotc -f zone-purge "' + zone + '"')
+		rv2 = os.system ('/usr/sbin/knotc -f zone-purge "' + zone + '"')
 	if rv0==0 and rv1==0 and rv2==0:
-		os.system ('knotc conf-commit')
+		os.system ('/usr/sbin/knotc conf-commit')
 	else:
 		if rv0==0:
-			os.system ('knotc conf-abort')
+			os.system ('/usr/sbin/knotc conf-abort')
 		log_error ('Knot DNS could not delete zone', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
 

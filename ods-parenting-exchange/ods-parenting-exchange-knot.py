@@ -45,9 +45,9 @@ def zone_add (zone, knot_zone_file):
 	raise NotImplementedError ('Add zones in ods-zonerecv instead of in ods-parenting-exchange')
 	return
 	#TODO#HERE-OR-DURING-RECV#
-	rv0 = os.system ('knotc conf-begin')
+	rv0 = os.system ('/usr/sbin/knotc conf-begin')
 	if rv0==0:
-		rv1 = os.system ('knotc conf-set zone.domain "' + zone + '"')
+		rv1 = os.system ('/usr/sbin/knotc conf-set zone.domain "' + zone + '"')
 		# Ignore the result, as it may be taken care of already
 		if rv1 != 0:
 			rv1 = 0
@@ -60,9 +60,9 @@ def zone_add (zone, knot_zone_file):
 		except:
 			rv2 = 2
 	if rv0==0 and rv1==0 and rv2==0:
-		os.system ('knotc conf-commit')
+		os.system ('/usr/sbin/knotc conf-commit')
 	else:
-		os.system ('knotc conf-abort')
+		os.system ('/usr/sbin/knotc conf-abort')
 		log_error ('Knot DNS could not add zone', zone)
 
 # Remove a zone from processing by Knot DNS
@@ -73,26 +73,26 @@ def zone_del (zone):
 	raise NotImplementedError ('Delete zones in ods-zonerecv instead of in ods-parenting-exchange')
 	return
 	#TODO#HERE-OR-DURING-RECV#
-	rv0 = os.system ('knotc conf-begin')
+	rv0 = os.system ('/usr/sbin/knotc conf-begin')
 	if rv0 == 0:
-		rv1 = os.system ('knotc conf-unset zone.domain "' + zone + '"')
+		rv1 = os.system ('/usr/sbin/knotc conf-unset zone.domain "' + zone + '"')
 	if rv0==0 and rv1==0:
-		rv2 = os.system ('knotc zone-purge "' + zone + '"')
+		rv2 = os.system ('/usr/sbin/knotc zone-purge "' + zone + '"')
 	if rv0==0 and rv1==0 and rv2==0:
-		os.system ('knotc conf-commit')
+		os.system ('/usr/sbin/knotc conf-commit')
 	else:
-		os.system ('knotc conf-abort')
+		os.system ('/usr/sbin/knotc conf-abort')
 		log_error ('Knot DNS could not delete zone', zone)
 
 # Update a zone being processed by Knot DNS
 #
 def zone_update (zone, new_zone_file, knot_zone_file):
-	log_debug ('CMD> ldns-zonediff -k -o "' + zone + '" "' + knot_zone_file + '" "' + new_zone_file + '" | knotc')
-	os.system ('ldns-zonediff -k -o "' + zone + '" "' + knot_zone_file + '" "' + new_zone_file + '" | knotc')
+	log_debug ('CMD> ldns-zonediff -k -o "' + zone + '" "' + knot_zone_file + '" "' + new_zone_file + '" | /usr/sbin/knotc')
+	os.system ('ldns-zonediff -k -o "' + zone + '" "' + knot_zone_file + '" "' + new_zone_file + '" | /usr/sbin/knotc')
 	# ignore previous result, but check the result
 	tmp_zone_file = '/tmp/' + zone
-	log_debug ('CMD> knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\' > "' + tmp_zone_file + '"')
-	os.system ('knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\' > "' + tmp_zone_file + '"')
+	log_debug ('CMD> /usr/sbin/knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\' > "' + tmp_zone_file + '"')
+	os.system ('/usr/sbin/knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\' > "' + tmp_zone_file + '"')
 	log_debug ('CMD> ldns-zonediff -o "' + zone + '" "' + tmp_zone_file + '" "' + new_zone_file + '"')
 	exitval = os.system ('ldns-zonediff -o "' + zone + '" "' + tmp_zone_file + '" "' + new_zone_file + '"')
 	if exitval != 0:
