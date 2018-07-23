@@ -19,12 +19,15 @@ def zonenames ():
 	# Collect the zone names mentioned in the zone list
 	workset = set ()
 	for zln in zlist:
+		zln = zln.rstrip ()
 		if zln.strip () == 'OK':
 			# Overcome inconsistent reporting habits of Knot DNS
 			continue
 		if zln [:14] != 'zone.domain = ':
 			raise Exception ('Found something else than a zone.domain property after "knotc conf-read zone.domain"')
 		work = zln [14:]
+		if work [-1:] == '.':
+			work = work [:-1]
 		workset.add (work)
 	return workset
 

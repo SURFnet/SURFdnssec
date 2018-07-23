@@ -1,0 +1,48 @@
+#!/usr/bin/python
+#
+# Knot-specific key destructor accessing PKCS #11
+# through the "keymgr" utility.  See its help
+# output for operational controls.
+#
+# This command does not actually destroy the keys; it merely
+# lists DELKEY commands to be sent over the votes queue to
+# ods-votes.  There, the receiving local Signer processes
+# each delete their local key copy.  The use of keymgr
+# made here is listing the keyids for the given zone.  This
+# allows the mapping of "DELKEY zone" arriving at keyops
+# to several "DELKEY zone keyid" lines to the votes queue.
+#
+# Note that keymgr permits keys to be removed regardless of
+# whether a zone is known to Knot DNS.
+#
+# This process has interactions with ods-zonedata-recv-knot.py
+# to add and remove zone data orthogonally, in spite of
+# Knot DNS resisting such an approach.  The opposite of this
+# file's operation is found in ods-votes-knot-delkey.  Both
+# the setup and teardown of dnssec signing for the zone(s) is
+# arranged after ods-votes-recv, so there can be a single
+# Signer machine finding the key in keymgr but multiple
+# who add or remove them in the Knot DNS configuration.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import sys
+
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
+
+
+# Parse cmdline args
+if len (sys.argv) < 2:
+	log_error ('Usage: ' + sys.argv [0] + ' zone...\n')
+	sys.exit (1)
+zones = sys.argv [1:]
+
+for zone in zones:
+	fd = os.popen ('keymgr -C /var/lib/knot/confdb "' + zone + '" list')
+	for fdl in fd:
+		kid = fdl.split (' ', 1) [0]
+		log_info ('Requesting zone', zone, 'removal of key pair', kid)
+		print 'votes> DELKEY %s %s' % (zone,kid)
+

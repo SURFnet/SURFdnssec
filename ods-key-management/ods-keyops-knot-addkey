@@ -10,18 +10,67 @@
 # This process has interactions with ods-zonedata-recv-knot.py
 # to add and remove zone data orthogonally, in spite of
 # Knot DNS resisting such an approach.  The opposite of this
-# file's operation is found in ods-votes-knot-delkey.
+# file's operation is found in ods-votes-knot-delkey.  Both
+# the setup and teardown of dnssec signing for the zone(s) is
+# arranged after ods-votes-recv, so there can be a single
+# Signer machine creating the key in PKCS #11 but multiple
+# who add or remove them in the Knot DNS configuration.
 #
 # From: Rick van Rein <rick@openfortress.nl>
 
 
 import os
 import sys
+import time
+import random
+
+import PyKCS11
 
 import rabbitdnssec
 from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
+#
+# A few useful constants
+#
+oidP256 = ''.join ([ chr(c) for c in [ 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07 ] ])
+oidP384 = ''.join ([ chr(c) for c in [ 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22 ] ])
+# Map curve names to (algid, ecparams)
+curves = {
+	"P-256": (13, oidP256),
+	"P-384": (14, oidP384),
+}
+
+#
+# Construct the CKA_ID to use, a BCD format YYYYMMDDhhmmssuuuuuu
+#
+def int2bcd (intval, bcdcount):
+	retval = ''
+	while bcdcount > 0:
+		decval = intval % 100
+		intval = intval / 100
+		hexval = (decval / 10) * 16 + (decval % 10)
+		retval = chr (hexval) + retval
+		bcdcount = bcdcount - 2
+	assert (bcdcount == 0)
+	assert (intval == 0)
+	return retval
+
+
+
+
+#
+# Retrieve configuration
+#
+
+p11cfg = rabbitdnssec.my_config ('pkcs11')
+p11libpath = str (p11cfg ['libfile']    )
+tokenlabel = str (p11cfg ['token_label'])
+curvenm    = str (p11cfg ['curve_name'] )
+if curvenm not in curves.keys ():
+	log_error ('Acceptable curve names are: ' + ', '.join (curves.keys ()) + '\n')
+	sys.exit (1)
+(dns_algid,p11_ecparams) = curves [curvenm]
 
 # Determine the signing algorithm to use for newly added keys
 curve_name = rabbitdnssec.my_config ('pkcs11') ['curve_name']
@@ -30,7 +79,6 @@ if curve_name == 'P-256':
 else:
 	raise NotImplementedError (sys.argv [0] + ' got a request for an unsupported curve: ' + curve_name)
 
-
 # Parse cmdline args
 if len (sys.argv) < 2:
 	log_error ('Usage: ' + sys.argv [0] + ' zone...\n')
@@ -38,41 +86,102 @@ if len (sys.argv) < 2:
 zones = sys.argv [1:]
 
 
-def dnssec_enable (zone):
-	# Ensure that a zone is served, with DNSSEC, by Knot DNS.
-	# Note: Zone data is supplied orthogonally; when no zone file
-	# exists there may be complaints from Knot DNS but it should
-	# continue to function for all other zones.
-	#
-	# Note: This procedure is idempotent, key additions are neutral
-	# for already-existing zones.
-	#
-	rv0 = os.system ('knotc conf-begin')
-	rv1 = 0
-	rv2 = 0
-	if rv0==0:
-		os.system ('knotc conf-set zone.domain "' + zone + '"')
-		# Ignore the result; the zone may already exist; check that
-		rv1 = os.system ('knotc conf-get "zone[' + zone + ']"')
-	if rv0==0 and rv1==0:
-		rv2 = os.system ('knotc conf-set "zone[' + zone + '].dnssec-signing" on')
-	if rv0==0 and rv1==0 and rv2==0:
-		os.system ('knotc conf-commit')
-	else:
-		if rv0==0:
-			os.system ('knotc conf-abort')
-		#TODO# Report that Knot DNS could not enable DNSSEC
-		log_error ('Knot DNS could not enable DNSSEC for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
+#
+# Load the PKCS #11 library
+#
+p11lib = PyKCS11.PyKCS11Lib ()
+p11lib.load (p11libpath)
+log_info ('Loaded PKCS #11 library', p11libpath)
+
+#
+# Find slots, tokens, and pick the desired one
+#
+tokenlabel = (tokenlabel + ' ' * 32) [:32]
+slots = p11lib.getSlotList ()
+slot_found = None
+for slotid in slots:
+	tokeninfo = p11lib.getTokenInfo (slotid)
+	if tokeninfo is None:
+		continue
+	if tokeninfo.label == tokenlabel:
+		slot_found = slotid
+if slot_found is None:
+	log_error ('Failed to locate a token with label ' + tokenlabel + '\n')
+	sys.exit (1)
+
+#
+# Open a session on the slot_found
+#
+session = p11lib.openSession (slot_found, PyKCS11.CKF_RW_SESSION)
+# pin = getpass.getpass ('Please enter the token PIN: ')
+pin = rabbitdnssec.pkcs11_pin ()
+session.login (pin, PyKCS11.CKU_USER)
 
 
-# Generate keys
+
+#
+# Now iterate over the 1+ zones specified in this command
+#
 for zone in zones:
-	rv0 = os.system ('keymgr "' + zone + '" generate algorithm="' + alg + '" ksk=yes zsk=yes')
-	rv1 = 0
-	rv2 = 0
-	if rv0 != 0:
-		#TODO# Log error
-		log_error ('Failed to generate key for for zone=' + zone + ' alg=' + alg)
-	if rv0==0:
-		dnssec_enable (zone)
+
+	#
+	# Produce the CKA_ID timestamp part
+	#
+	now = time.time ()
+	now_int = int (now)
+	now_us = int (1000000 * (now - now_int))
+	(now_year, now_month, now_day, now_hour, now_min, now_sec) = time.localtime (now_int) [:6]
+	now_bcd = int2bcd (now_year, 4) + int2bcd (now_month, 2) + int2bcd (now_day, 2) + int2bcd (now_hour, 2) + int2bcd (now_min, 2) + int2bcd (now_sec, 2) + int2bcd (now_us, 6)
+	cka_id = now_bcd
+
+	#
+	# Generate a random salt and random extension to cka_id
+	#
+	prng = random.Random ()
+	salt = ''.join ([ chr (int (prng.uniform (0, 256))) for i in range(16) ])
+	xtid = ''.join ([ chr (int (prng.uniform (0, 256))) for i in range(10) ])
+	cka_id = cka_id + xtid
+	log_debug ('CKA_ID starting with BCD value is', cka_id.encode ('hex'))
+
+	#
+	# Prepare the Public and Private Key Templates
+	#
+	pubtmpl = [
+		( PyKCS11.CKA_CLASS,		PyKCS11.CKO_PUBLIC_KEY ),
+		( PyKCS11.CKA_EC_PARAMS,	p11_ecparams ),
+		( PyKCS11.CKA_LABEL,		zone ),
+		( PyKCS11.CKA_ID,		cka_id ),
+		( PyKCS11.CKA_KEY_TYPE,		PyKCS11.CKK_ECDSA ),
+		( PyKCS11.CKA_VERIFY,		True ),
+		( PyKCS11.CKA_ENCRYPT,		False ),
+		( PyKCS11.CKA_WRAP,		False ),
+		( PyKCS11.CKA_TOKEN,		True ),
+	]
+	privtmpl = [
+		( PyKCS11.CKA_CLASS,		PyKCS11.CKO_PRIVATE_KEY ),
+		( PyKCS11.CKA_LABEL,		zone ),
+		( PyKCS11.CKA_ID,		cka_id ),
+		( PyKCS11.CKA_KEY_TYPE,		PyKCS11.CKK_ECDSA ),
+		( PyKCS11.CKA_SIGN,		True ),
+		( PyKCS11.CKA_DECRYPT,		False ),
+		( PyKCS11.CKA_UNWRAP,		False ),
+		( PyKCS11.CKA_SENSITIVE,	True ),
+		( PyKCS11.CKA_TOKEN,		True ),
+		( PyKCS11.CKA_PRIVATE,		True ),
+		( PyKCS11.CKA_EXTRACTABLE,	False ),
+	]
+
+	#
+	# Create an ECDSA key pair
+	#
+	ckm_ecdsa = PyKCS11.Mechanism (PyKCS11.CKM_ECDSA_KEY_PAIR_GEN, None)
+	(pubkey, privkey) = session.generateKeyPair (pubtmpl, privtmpl, ckm_ecdsa)
+	log_info ('The key pair was generated for', zone)
+	print 'votes> ADDKEY %s %s' % (zone, cka_id.encode ('hex'))
+
+
+#
+# Cleanup
+#
+session.closeSession ()
 

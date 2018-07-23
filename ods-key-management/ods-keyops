@@ -16,6 +16,7 @@ import os
 import sys
 import re
 
+import subprocess
 import time
 
 import pika
@@ -63,19 +64,41 @@ with rabbitdnssec.amqp_client_channel (
 			except:
 				log_error ('Illegal key_ops command: ' + cmd + '\n')
 				succcess = False
+		votes = []
 		if success and len (add_zones) > 0:
 			log_info ('Subcommand: ' +
-					sys.argv [0] + '-' + backend + '-addkey ' +
-					' '.join (add_zones) + '\n')
-			exitval = os.system (sys.argv [0] + '-' + backend + '-addkey ' +
-					' '.join (add_zones))
-			success = (exitval == 0)
+				sys.argv [0] + '-' + backend + '-addkey '
+				+ ' '.join (add_zones) + '\n')
+			try:
+				output = subprocess.Popen (
+					[sys.argv [0]+'-'+backend+'-addkey']
+						+ add_zones,
+					stdout=subprocess.PIPE).stdout
+				for outln in output.readlines ():
+					if outln [:7] == 'votes> ':
+						votes.append (outln [7:].strip ())
+			except subprocess.CalledProcessError:
+				success = False
 		if success and len (del_zones) > 0:
-			votes = ' '.join ([opcode] + add_zones + del_zones)
-			chan.basic_publish (
-				exchange=votexg,
-				routing_key='signconf_votes',
-				body=votes)
+			log_info ('Subcommand: '
+				+ sys.argv [0] + '-' + backend + '-delkey '
+				+ ' '.join (del_zones) + '\n')
+			try:
+				output = subprocess.Popen (
+					[sys.argv[0]+'-'+backend+'-delkey']
+						+ del_zones,
+					stdout=subprocess.PIPE).stdout
+				for outln in output.readlines ():
+					if outln [:7] == 'votes> ':
+						votes.append (outln [7:].strip ())
+			except subprocess.CalledProcessError:
+				success = False
+		if success and len (votes) > 0:
+			for vote in votes:
+				chan.basic_publish (
+					exchange=votexg,
+					routing_key='signconf_votes',
+					body=vote)
 		if success:
 			clx.ack ()
 			log_info ('Acknowledged all -- done!')

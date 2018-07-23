@@ -23,21 +23,12 @@ import rabbitdnssec
 from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
-# Determine the signing algorithm to use for newly added keys
-
-curve_name = rabbitdnssec.my_config ('pkcs11') ['curve_name']
-
-if curve_name == 'P-256':
-	alg = 'ECDSAP256SHA256'
-else:
-	raise NotImplementedError (sys.argv [0] + ' got a request for an unsupported curve: ' + curve_name)
-
-
-# Parse cmdline args
-if len (sys.argv) < 2:
-	log_error ('Usage: ' + sys.argv [0] + ' zone...\n')
+# Parse commandline arguments
+try:
+	[_me,zone,keyid] = sys.argv
+except:
+	sys.stderr.write ('Usage: ' + sys.argv [0] + ' zone keyid\n')
 	sys.exit (1)
-zones = sys.argv [1:]
 
 
 def dnssec_strip (zone):
@@ -119,15 +110,14 @@ def dnssec_disable (zone):
 		log_error ('Knot DNS could not disable DNSSEC for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
 
 
-# Find and delete keys
-for zone in zones:
-	fd = os.popen ('keymgr "' + zone + '" list')
-	for fdl in fd:
-		kid = fdl.split (' ', 1) [0]
-		rv = os.system ('keymgr "' + zone + '" delete "' + kid + '"')
-		if rv != 0:
-			log_error ('railed to delete key ' + kid + ' for for zone=' + zone + ' alg=' + alg)
-	fd.close ()
-	# disable DNSSEC and strip the zone while at it
-	dnssec_disable (zone)
+print 'CMD> keymgr -C /var/lib/knot/confdb ' + zone + ' delete ' + keyid
+status = os.system ('keymgr -C /var/lib/knot/confdb ' + zone + ' delete ' + keyid)
+if status != 0:
+	log_error ('Failed to delete key ' + keyid + ' for zone ', zone)
+	log_error ('In spite of lingering key, disabling DNSSEC for zone', zone)
+
+# disable DNSSEC and strip the zone while at it
+dnssec_disable (zone)
+
+sys.exit (os.WEXITSTATUS (status))
 

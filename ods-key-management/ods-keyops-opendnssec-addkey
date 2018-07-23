@@ -86,19 +86,28 @@ def int2bcd (intval, bcdcount):
 
 
 #
+# Retrieve configuration
+#
+
+p11cfg = rabbitdnssec.my_config ('pkcs11')
+p11libpath = str (p11cfg ['libfile']    )
+tokenlabel = str (p11cfg ['token_label'])
+curvenm    = str (p11cfg ['curve_name'] )
+print 'P11LIBPATH =', p11libpath, '::', type (p11libpath)
+print 'TOKENLABEL =', tokenlabel, '::', type (tokenlabel)
+print 'CURVENAME  =', curvenm,    '::', type (curvenm)
+if curvenm not in curves.keys ():
+	log_error ('Acceptable curve names are: ' + ', '.join (curves.keys ()) + '\n')
+	sys.exit (1)
+(dns_algid,p11_ecparams) = curves [curvenm]
+
+#
 # Parse arguments
 #
 if len (sys.argv) < 2:
 	log_error ('Usage: ' + ' zone...\n')
 	sys.exit (1)
-p11libpath = rabbitdnssec.pkcs11_libfile
-tokenlabel = rabbitdnssec.pkcs11_token_label
-curvenm = rabbitdnssec.pkcs11_curve_name
 zones = sys.argv [1:]
-if curvenm not in curves.keys ():
-	log_error ('Acceptable curve names are: ' + ', '.join (curves.keys ()) + '\n')
-	sys.exit (1)
-(dns_algid,p11_ecparams) = curves [curvenm]
 
 
 #
@@ -154,7 +163,7 @@ for zone in zones:
 	#
 	prng = random.Random ()
 	salt = ''.join ([ chr (int (prng.uniform (0, 256))) for i in range(16) ])
-	xtid = ''.join ([ chr (int (prng.uniform (0, 256))) for i in range( 4) ])
+	xtid = ''.join ([ chr (int (prng.uniform (0, 256))) for i in range(10) ])
 	cka_id = cka_id + xtid
 	log_debug ('CKA_ID starting with BCD value is', cka_id.encode ('hex'))
 
@@ -192,6 +201,7 @@ for zone in zones:
 	ckm_ecdsa = PyKCS11.Mechanism (PyKCS11.CKM_ECDSA_KEY_PAIR_GEN, None)
 	(pubkey, privkey) = session.generateKeyPair (pubtmpl, privtmpl, ckm_ecdsa)
 	log_info ('The key pair was generated for', zone)
+	print 'votes> ADDKEY %s %s' % (zone, cka_id.encode ('hex'))
 
 
 #

@@ -7,9 +7,12 @@
 # from a local or remote process that interacts with PKCS #11.
 #
 # For ADDKEY, the proper response is to trigger updating the .signconf
-# file for the zone.
+# file for OpenDNSSEC for the zone, and on Knot DNS it should switch
+# on DNSSEC signing.
 #
-# For DELKEY, the proper response is to remove the key from PKCS #11.
+# For DELKEY, the proper response is to remove the key from PKCS #11
+# as well as to stop using it.  (Note that replication might re-install
+# the removed key, so that could be confusing and needs handling.)
 #
 # From: Rick van Rein <rick@openfortress.nl>
 
@@ -37,15 +40,23 @@ import os
 def process_msg (chan, mth, props, body):
 	ok = True
 	try:
-		[add_del, zone] = body.split (' ')
-		if add_del == 'ADDKEY':
-			# Key has already been added, no work to do here;
-			# OpenDNSSEC update to .signconf follows below
-			pass
-		elif add_del == 'DELKEY':
-			os.system ('ods-votes-' + backend + '-delkey ' + zone)
+		[keycmd, zone, keyid] = body.split (' ', 2)
+		if keycmd == 'ADDKEY':
+			timeout = 1
+			while True:
+				status = os.system ('ods-votes-' + backend + '-addkey ' + zone + ' ' + keyid)
+				if status == 0:
+					break
+				log_error ('No keyid', keyid, 'for zone', zone, 'so awaiting it for', timeout, 'seconds')
+				time.sleep (timeout)
+				timeout = timeout * 2
+				if timeout > 60:
+					timeout = 60
+		elif keycmd == 'DELKEY':
+			#TODO#FUTURE# Perhaps delete specific key identity
+			os.system ('ods-votes-' + backend + '-delkey ' + zone + ' ' + keyid)
 		else:
-			log_error ('Invalid instruction', add_del, 'over signconf_votes')
+			log_error ('Invalid instruction', body, 'over signconf_votes')
 			ok = False
 		if backend == 'opendnssec':
 			# Update .signconf, creating or deleting as per zonelist.xml
