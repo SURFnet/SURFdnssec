@@ -40,20 +40,20 @@ def dnssec_enable (zone):
 	# Note: This procedure is idempotent, key additions are neutral
 	# for already-existing zones.
 	#
-	rv0 = os.system ('/usr/sbin/knotc conf-begin')
+	rv0 = os.system ('knotc conf-begin')
 	rv1 = 0
 	rv2 = 0
 	if rv0==0:
-		os.system ('/usr/sbin/knotc conf-set zone.domain "' + zone + '"')
+		os.system ('knotc conf-set zone.domain "' + zone + '"')
 		# Ignore the result; the zone may already exist; check that
-		rv1 = os.system ('/usr/sbin/knotc conf-get "zone[' + zone + ']"')
+		rv1 = os.system ('knotc conf-get "zone[' + zone + ']"')
 	if rv0==0 and rv1==0:
-		rv2 = os.system ('/usr/sbin/knotc conf-set "zone[' + zone + '].dnssec-signing" on')
+		rv2 = os.system ('knotc conf-set "zone[' + zone + '].dnssec-signing" on')
 	if rv0==0 and rv1==0 and rv2==0:
-		os.system ('/usr/sbin/knotc conf-commit')
+		os.system ('knotc conf-commit')
 	else:
 		if rv0==0:
-			os.system ('/usr/sbin/knotc conf-abort')
+			os.system ('knotc conf-abort')
 		#TODO# Report that Knot DNS could not enable DNSSEC
 		log_error ('Knot DNS could not enable DNSSEC for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
 
