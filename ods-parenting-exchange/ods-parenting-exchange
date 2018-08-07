@@ -390,8 +390,7 @@ class ParentingExchange (object):
 		if have_zone and not remove:
 			backendmod.zone_update (self.zone_name, presig_path + '.prepublish', signed_path)
 			try:
-				#TODO#TMP# os.unlink (presig_path + '.prepublish')
-				log_debug ('Temporarily keeping ' + presig_path + '.prepublish')
+				os.rename (presig_path + '.prepublish', presig_path)
 			except OSError, oe:
 				if oe.errno != 2:
 					raise
