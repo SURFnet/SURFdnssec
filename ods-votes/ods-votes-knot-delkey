@@ -59,8 +59,8 @@ def dnssec_strip (zone):
 		log_debug ('knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\'' + ' > "' + signedzonefile + '"')
 		rv1 = os.system ('knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\'' + ' > "' + signedzonefile + '"')
 	if rv0==0 and rv1==0:
-		log_debug ('ldns-zonediff -k -S -K -N -o "' + zone + '" "' + signedzonefile + '" "' + presigzonefile + '" | knotc')
-		rv2 = os.system ('ldns-zonediff -k -S -K -N -o "' + zone + '" "' + signedzonefile + '" "' + presigzonefile + '" | knotc')
+		log_debug ('ldns-zonediff -k -k -S -K -N -o "' + zone + '" "' + signedzonefile + '" "' + presigzonefile + '" | knotc')
+		rv2 = os.system ('ldns-zonediff -k -k -S -K -N -o "' + zone + '" "' + signedzonefile + '" "' + presigzonefile + '" | knotc')
 	try:
 		pass #TODO#DEBUG# os.unlink (signedzonefile)
 	except:
