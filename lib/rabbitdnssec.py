@@ -183,14 +183,15 @@ def my_credentials (ovr_appname=None, ovr_username=None):
 # supplied here as a parameter, and may well be derived with
 # my_credentials().
 # 
-def my_connectionparameters (my_creds):
+def my_connectionparameters (my_creds, **params):
 	return pika.ConnectionParameters (
 			host=this_machine,
 			port=port,
 			virtual_host=vhost,
 			ssl=wrap_tls,
 			ssl_options=conf_tls,
-			credentials=my_creds)
+			credentials=my_creds,
+			**params)
 
 # Construct a BasicProperties object, based on standard available
 # information and optional headers.  There are options for overriding
