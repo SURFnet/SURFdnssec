@@ -372,8 +372,11 @@ class ParentingExchange (object):
 		all_ds.sort ()  # Reproducible text #TODO# Bump SOA serial...
 		ds_text = '\n'.join (all_ds)
 		zone_path = uploaded_file (self.zone_name)
-		zone_text = open (zone_path).read ()
-		zone_text += '\n; Parenting adds:\n\n' + ds_text + '\n'
+		if remove:
+			zone_text = '; Zone no longer uploaded; Parenting adds:\n\n'
+		else:
+			zone_text = open (zone_path).read ()
+			zone_text += '\n; Parenting adds:\n\n' + ds_text + '\n'
 		presig_path = unsigned_file (self.zone_name)
 		signed_path =   signed_file (self.zone_name) # Not written
 		log_debug ('Writing changed zone for', self.zone_name)
