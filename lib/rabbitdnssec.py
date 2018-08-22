@@ -55,7 +55,7 @@ atexit.register (cleanup_syslog)
 # Setup the RabbitMQ client
 #
 this_machine	= socket.gethostname ().split ('.') [0]
-port		= int (appcfg ['rabbitmq'] ['port'])
+this_port	= int (appcfg ['rabbitmq'] ['port'])
 vhost		=      appcfg ['rabbitmq'] ['vhost']
 signer_cluster	=      appcfg ['rabbitmq'] ['signer_cluster']
 signer_machines	=      appcfg ['rabbitmq'] ['signer_machines'].split ()
@@ -183,10 +183,10 @@ def my_credentials (ovr_appname=None, ovr_username=None):
 # supplied here as a parameter, and may well be derived with
 # my_credentials().
 # 
-def my_connectionparameters (my_creds, **params):
+def my_connectionparameters (my_creds, host=this_machine, port=this_port, **params):
 	return pika.ConnectionParameters (
-			host=this_machine,
-			port=port,
+			host,
+			port,
 			virtual_host=vhost,
 			ssl=wrap_tls,
 			ssl_options=conf_tls,
@@ -366,7 +366,7 @@ def open_client_connection (username=None, hostname='localhost'):
 		creds = None
 	cnxparm = pika.ConnectionParameters (
 		host=hostname,
-		port=port,
+		port=this_port,
 		virtual_host=vhost,
 		ssl=wrap_tls,
 		ssl_options=conf_tls,

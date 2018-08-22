@@ -63,14 +63,14 @@ def process_msg (chan, method, props, body):
 
 #
 # Try to deliver service, returning True if we subscribed
-def try_stash (sockaddr):
+def try_stash (hst, prt):
 	global queuenames, creds
 	sth_done = False
 	def invoke_process_msg (chan, method, props, body):
 		global sth_done
 		sth_done = True
 		return process_msg (chan, method, props, body)
-	cnxparm = rabbitdnssec.my_connectionparameters (creds)
+	cnxparm = rabbitdnssec.my_connectionparameters (creds, host=hst, port=prt)
 	cnx = None
 	try:
 		cnx = pika.BlockingConnection (cnxparm)
@@ -104,8 +104,8 @@ def listenloop ():
 	for hostaddr in hostaddrs:
 		if exitasap:
 			return done_sth
-		(fam, typ, pro, can, adr) = hostaddr
-		if try_stash (adr):
+		(fam, typ, pro, can, (adr,prt,x1,x2)) = hostaddr
+		if try_stash (adr,prt):
 			done_sth = True
 		else:
 			log_info ('Skipped listening to', adr)
