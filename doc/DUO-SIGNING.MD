@@ -44,8 +44,7 @@ this key material is that we only need to add one
 DS record to the parent zone, instead of one for
 each of our Signer machines.  In terms of network
 bandwidth, that is a pleasant guesture and worth
-the explicit distribution of key material.  The same
-goes for `NSEC3PARAM` material, which we also share.
+the explicit distribution of key material.
 
 ## Independent Signing
 
@@ -57,6 +56,18 @@ as different signatures.  This takes more compute
 time, but it also means that both Signer machines
 are constantly tested, so dead code has a zero
 chance of lurking in the wings.
+
+Note that not even `NSEC3PARAM` records need to be
+coordinated between the Signer machines.  Authenticated
+denial holds the information from the record used, and
+the TTL of that original record is set to 0 so cannot
+be cached at all.  As a result, authenticated denial
+can be processed in isolation without a need to
+lookup the parameters and risking to find the value
+from generated locally on another Signer machine.
+In the end, the `RRSIG` on the `NSEC3` is what prooves
+matters; the `NSEC3PARAM` are not an authentication
+matter but one of privacy and concealment.
 
 The result of this work can be used in any mix,
 which is an unexpected result of the way DNSSEC
