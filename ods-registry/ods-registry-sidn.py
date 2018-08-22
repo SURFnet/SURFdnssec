@@ -89,6 +89,7 @@ import dns.rdataclass
 import dns.rdatatype
 import dns.rdtypes.ANY
 import dns.rdtypes.ANY.DNSKEY
+from dns.rdtypes import dnskeybase
 
 import socket
 import ssl
@@ -458,7 +459,7 @@ epp_clos)
 	eppkeys = []
 	for xk in resp.findall ('{' + eppns + '}response/{' + eppns + '}extension/{' + dnssecns + '}infData/{' + dnssecns + '}keyData'):
 		flags = int (xk.find ('{' + dnssecns + '}flags').text)
-		if flags & dns.rdtypes.ANY.DNSKEY.SEP != 0:
+		if flags & dnskeybase.SEP != 0:
 			proto = int (xk.find ('{' + dnssecns + '}protocol').text)
 			alg = int (xk.find ('{' + dnssecns + '}alg').text)
 			key = base64.standard_b64decode (xk.find ('{' + dnssecns + '}pubKey').text)
@@ -482,7 +483,7 @@ def keysync (sox, zonestr):
 	#CLASS# keys = local_resolver.query (zone, rdtype=dns.rdtypes.ANY.DNSKEY)
 	keys = local_resolver.query (zone, rdtype=48)	# DNSKEY
 	for k in keys:
-		if k.flags & dns.rdtypes.ANY.DNSKEY.SEP != 0:
+		if k.flags & dnskeybase.SEP != 0:
 			newkeys.append (k)
 	#TMP# update_keys (sox, zone, [], newkeys)
 	oldkeys = eppkeys (sox, zonestr)
