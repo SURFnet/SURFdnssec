@@ -395,7 +395,7 @@ class amqp_client_channel ():
 	   due to an exception, than the transaction will be rolled back.
 	"""
 
-	def __init__ (self, username=None, hostname=None, transactional=False):
+	def __init__ (self, username=None, hostname='localhost', transactional=False):
 		self.username = username
 		self.hostname = hostname
 		self.transact = transactional
