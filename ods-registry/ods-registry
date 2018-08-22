@@ -360,8 +360,8 @@ def step_to_4public (zone, parent, prepkeys, prepage, nextkeys):
 	log_info ('step_to_4public for', zone)
 	znm = name.from_text (parent)
 	try:
-		log_debug ('Querying NS:', default_auth_ns.nameservers)
-		nsset = default_auth_ns.query (znm, rdtype=rdatatype.NS).rrset
+		log_debug ('Querying NS:', default_ns.nameservers)
+		nsset = default_ns.query (znm, rdtype=rdatatype.NS).rrset
 	except resolver.NXDOMAIN:
 		syslog.syslog (syslog.LOG_CRIT, 'No authoritative name servers found for ' + zone)
 		return False
