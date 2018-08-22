@@ -1,0 +1,155 @@
+#!/usr/bin/env python
+#
+# Share any keys that may already be present in PKCS #11 for the
+# given zones.  This uses the format setup by ods-keyops-knot-addkey,
+# which sets the zone name in the CKA_LABEL and the keyid in the
+# CKA_ID fields.
+#
+# Any keys found, and there may be multiple, are added to the keymgr
+# for the given zone through import-pkcs11.
+#
+# This command is used from ods-zonedata-recv-knot.py, where it helps
+# to correct Knot's removal of the key from keymgr's key database at
+# the time a zone is removed from service.  In that, it is part of
+# the orthogonal concept of key management for zones.  Note that keys
+# will be kept on PKCS #11 when they are removed from keymgr's key
+# database; this is a problem that we intended to solve already, as
+# replication of PKCS #11 repositories lands us with a similar
+# potential problem.  This cleanup is handled elsewhere, with the
+# desired respect for key material and the robust removal of it in
+# PKCS #11 implementations.
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+import os
+import sys
+
+import PyKCS11
+
+import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
+
+#NOTNEEDED# #
+#NOTNEEDED# # A few useful constants
+#NOTNEEDED# #
+#NOTNEEDED# oidP256 = ''.join ([ chr(c) for c in [ 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d,
+#NOTNEEDED#  0x03, 0x01, 0x07 ] ])
+#NOTNEEDED# oidP384 = ''.join ([ chr(c) for c in [ 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22
+#NOTNEEDED# ] ])
+#NOTNEEDED# # Map curve names to (algid, ecparams)
+#NOTNEEDED# curves = {
+#NOTNEEDED#         "P-256": (13, oidP256),
+#NOTNEEDED#         "P-384": (14, oidP384),
+#NOTNEEDED# }
+
+#
+# Construct the string representation of the keyid
+#
+def keyid2str (keyid_iterable):
+	retval = ''
+	for kidch in keyid_iterable:
+		retval = retval + ('%02x' % kidch)
+	return retval
+
+#
+# Retrieve configuration
+#
+
+p11cfg = rabbitdnssec.my_config ('pkcs11')
+p11libpath = str (p11cfg ['libfile']    )
+tokenlabel = str (p11cfg ['token_label'])
+#NOTNEEDED# curvenm    = str (p11cfg ['curve_name'] )
+#NOTNEEDED# if curvenm not in curves.keys ():
+#NOTNEEDED#         log_error ('Acceptable curve names are: ' + ', '.join (curves.keys ()) + '\n')
+#NOTNEEDED#         sys.exit (1)
+#NOTNEEDED# (dns_algid,p11_ecparams) = curves [curvenm]
+
+#NOTNEEDED# # Determine the signing algorithm to use for newly added keys
+#NOTNEEDED# curve_name = rabbitdnssec.my_config ('pkcs11') ['curve_name']
+#NOTNEEDED# if curve_name == 'P-256':
+#NOTNEEDED#         alg = 'ECDSAP256SHA256'
+#NOTNEEDED# else:
+#NOTNEEDED#         raise NotImplementedError (sys.argv [0] + ' got a request for an unsupported curve: ' + curve_name)
+
+# Parse cmdline args
+if len (sys.argv) < 2:
+        log_error ('Usage: ' + sys.argv [0] + ' zone...\n')
+        sys.exit (1)
+zones = sys.argv [1:]
+
+#
+# Load the PKCS #11 library
+#
+p11lib = PyKCS11.PyKCS11Lib ()
+p11lib.load (p11libpath)
+log_info ('Loaded PKCS #11 library', p11libpath)
+
+#
+# Find slots, tokens, and pick the desired one
+#
+tokenlabel = (tokenlabel + ' ' * 32) [:32]
+slots = p11lib.getSlotList ()
+slot_found = None
+for slotid in slots:
+        tokeninfo = p11lib.getTokenInfo (slotid)
+        if tokeninfo is None:
+                continue
+        if tokeninfo.label == tokenlabel:
+                slot_found = slotid
+if slot_found is None:
+        log_error ('Failed to locate a token with label ' + tokenlabel + '\n')
+        sys.exit (1)
+
+#
+# Open a session on the slot_found
+#
+session = p11lib.openSession (slot_found, PyKCS11.CKF_RW_SESSION)
+# pin = getpass.getpass ('Please enter the token PIN: ')
+pin = rabbitdnssec.pkcs11_pin ()
+session.login (pin, PyKCS11.CKU_USER)
+
+
+#
+# Now iterate over the 1+ zones specified in this command
+#
+for zone in zones:
+
+	#
+	# Mount a search for CKA_LABEL set to zone
+	#
+	findtmpl = [
+		( PyKCS11.CKA_CLASS,		PyKCS11.CKO_PRIVATE_KEY ),
+		( PyKCS11.CKA_KEY_TYPE,		PyKCS11.CKK_ECDSA ),
+		( PyKCS11.CKA_PRIVATE,		True ),
+		( PyKCS11.CKA_SIGN,		True ),
+		( PyKCS11.CKA_TOKEN,		True ),
+		( PyKCS11.CKA_UNWRAP,		False ),
+		( PyKCS11.CKA_NEVER_EXTRACTABLE,True ),
+		( PyKCS11.CKA_ALWAYS_SENSITIVE,	True ),
+		( PyKCS11.CKA_LABEL,		zone ),
+	]
+
+	#
+	# Find the list of keyids
+	#
+	keyids = [
+		keyid2str(
+			session.getAttributeValue( oid, [PyKCS11.CKA_ID ] )
+			[0] )
+		for oid in session.findObjects (findtmpl)
+	]
+
+	#
+	# Setup the keymgr for any keyid in this zone
+	#
+	for kid in keyids:
+		log_notice ('Sharing pre-existing', kid, 'for zone', zone)
+		log_debug ('CMD> keymgr -C /var/lib/knot/confdb "' + zone + '" import-pkcs11 ' + kid)
+		os.system ('keymgr -C /var/lib/knot/confdb "' + zone + '" import-pkcs11 ' + kid + ' ksk=yes zsk=yes')
+
+
+#
+# Cleanup
+#
+session.closeSession ()

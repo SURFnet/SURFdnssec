@@ -65,6 +65,8 @@ def addzone (zone):
 			rv2 = 2
 	if rv0==0 and rv1==0 and rv2==0:
 		os.system ('/usr/sbin/knotc conf-commit')
+		log_debug ('CMD> ods-keyops-knot-sharekey "' + zone + '")
+		os.system ('ods-keyops-knot-sharekey "' + zone + '")
 	else:
 		if rv0==0:
 			os.system ('/usr/sbin/knotc conf-abort')
