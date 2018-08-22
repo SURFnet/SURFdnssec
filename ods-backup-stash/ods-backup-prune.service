@@ -5,6 +5,7 @@ After=rabbitmq-server.service
 [Install]
 
 [Service]
+#TODO# User = ...
 Type = simple
 Environment = PYTHONPATH=@PREFIX@/lib
 ExecStart = @PREFIX@/bin/ods-backup-prune

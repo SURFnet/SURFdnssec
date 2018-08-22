@@ -20,7 +20,7 @@ def zonenames ():
 	workset = set ()
 	for zln in zlist:
 		zln = zln.rstrip ()
-		if zln.strip () == 'OK':
+		if zln == 'OK':
 			# Overcome inconsistent reporting habits of Knot DNS
 			continue
 		if zln [:14] != 'zone.domain = ':

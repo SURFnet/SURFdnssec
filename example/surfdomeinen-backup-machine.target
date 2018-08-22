@@ -6,4 +6,5 @@ Requires = ods-backup-stash.service ods-backup-prune.service
 BindsTo  = ods-backup-stash.service ods-backup-prune.service
 
 [Install]
+WantedBy = multi-user.target
 

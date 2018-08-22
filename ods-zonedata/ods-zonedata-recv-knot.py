@@ -60,7 +60,11 @@ def addzone (zone):
 			fd.write (zone + '. 300 IN NS ns2.todo.\n')
 			fd.close ()
 			os.chmod (knot_signed, shared)
+<<<<<<< Updated upstream
 			rv2 = os.system ('/usr/sbin/knotc conf-set "zone[' + zone + '].file" "' + knot_signed + '"')
+=======
+			rv2 = os.system ('knotc conf-set "zone[' + zone + '].file" "' + knot_signed + '"')
+>>>>>>> Stashed changes
 		except:
 			rv2 = 2
 	if rv0==0 and rv1==0 and rv2==0:
