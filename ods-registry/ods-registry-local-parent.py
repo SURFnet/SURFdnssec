@@ -30,7 +30,7 @@ def connect ():
 	#
 	# Create the queueing infrastructure for the parent exchange.
 	#
-	creds = rabbitdnssec.my_creds (ovr_username='uplink')
+	creds = rabbitdnssec.my_credentials (ovr_username='uplink')
 	intcnx = None
 	chan = None
 	try:
