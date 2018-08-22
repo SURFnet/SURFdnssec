@@ -8,6 +8,7 @@
 import sys
 
 import rabbitdnssec
+from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
 cfg = rabbitdnssec.my_config ('ods-registry')

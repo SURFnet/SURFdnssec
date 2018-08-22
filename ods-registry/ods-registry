@@ -24,8 +24,6 @@ from importlib import import_module
 import rabbitdnssec
 from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
-import rabbitdnssec
-
 
 #
 # Load configuration data
