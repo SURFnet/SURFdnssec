@@ -6,7 +6,7 @@ After=rabbitmq-server.service
 
 [Service]
 Type = simple
-#TODO#HOME#
+User = portal
 Environment = PYTHONPATH=@PREFIX@/lib
 ExecStart = @PREFIX@/bin/ods-rsync-zonedata
 

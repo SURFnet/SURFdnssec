@@ -6,7 +6,7 @@ After=rabbitmq-server.service
 
 [Service]
 Type = simple
-#TODO#HOME#
+User = signer
 Environment = PYTHONPATH=@PREFIX@/lib
 ExecStart = @PREFIX@/bin/ods-keyops
 
