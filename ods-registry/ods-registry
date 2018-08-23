@@ -395,7 +395,8 @@ def step_to_4public (zone, parent, prepkeys, prepage, nextkeys):
 			return False
 		except resolver.NoAnswer:
 			syslog.syslog (syslog.LOG_ERR, 'No answer from parent name server on ' + zone + ' DS')
-			return False
+			if len (prepkeys) > 0:
+				return False
 		except Exception, e:
 			syslog.syslog (syslog.LOG_ERR, 'Exception during parent query ' + zone + ' DS: ' + str (e) + ':' + str (type (e)))
 			return False
