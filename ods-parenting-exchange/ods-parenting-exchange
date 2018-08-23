@@ -242,9 +242,13 @@ class ParentingExchange (object):
 		self.dnskeys = None
 		self.consumer_tags = []
 		self.children_up2date = has_booted
+		log_debug ('Setting up DNSKEYs for', zone_name)
 		self.setup_dnskeys ()
+		log_debug ('Updating uploaded for', zone_name)
 		self.update_uploaded ()
+		log_debug ('Setting up queue and callback for', zone_name)
 		self.setup_queue_and_callback ()
+		log_debug ('Initialisation done for', zone_name)
 
 	def setup_queue_and_callback (self):
 		"""Setup the callback for our zone-specific queue.
