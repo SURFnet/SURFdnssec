@@ -236,19 +236,16 @@ class ParentingExchange (object):
 		    events that call for handling as a parent or child.
 		"""
 		self.zone_name = zone_name
+		self.is_closed = False
 		self.chan = chan
 		self.child_ns = {}
 		self.child_dnskeys = {}
 		self.dnskeys = None
 		self.consumer_tags = []
 		self.children_up2date = has_booted
-		log_debug ('Setting up DNSKEYs for', zone_name)
 		self.setup_dnskeys ()
-		log_debug ('Updating uploaded for', zone_name)
 		self.update_uploaded ()
-		log_debug ('Setting up queue and callback for', zone_name)
 		self.setup_queue_and_callback ()
-		log_debug ('Initialisation done for', zone_name)
 
 	def setup_queue_and_callback (self):
 		"""Setup the callback for our zone-specific queue.
@@ -290,6 +287,7 @@ class ParentingExchange (object):
 				routing_key=self.zone_name,
 				body='')
 		self.chan.queue_delete (queue=self.zone_name + '_zonekeys')
+		self.is_closed = True
 
 	def announce_dnskeys (self):
 		"""Route our DNSKEYs to the listeners, by passing it to the
@@ -421,7 +419,7 @@ class ParentingExchange (object):
 		self.publish_unsigned ()
 
 	def update_uploaded (self):
-		"""Read the zonefile, or detect its absense.  Process changes
+		"""Read the zonefile, or detect its absence.  Process changes
 		   to the child NS, and if need be, close down service.
 		"""
 		#
@@ -547,7 +545,10 @@ def update_parenting_exchange (zone_name):
 	if not zone_re.match (zone_name):
 		log_error ('Parenting Exchange does not support zone syntax for', zone_name)
 	elif parenting_exchange.has_key (zone_name):
-		parenting_exchange [zone_name].update_uploaded ()
+		pexobj = parenting_exchange [zone_name]
+		pexobj.update_uploaded ()
+		if pexobj.is_closed:
+			del parenting_exchange [zone_name]
 	else:
 		parenting_exchange [zone_name] = ParentingExchange (chan, zone_name, has_booted=parenting_exchange_has_booted)
 
