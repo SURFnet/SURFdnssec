@@ -50,10 +50,16 @@ def process_msg (chan, mth, props, body):
 			try_unlink ('/var/opendnssec/parenting/' + zone + '.0signer')
 			log_info ('Removed /var/opendnssec/parenting/' + zone + '.0signer')
 		else:
-			# save body to new zonefile -- but not in unsigned yet
+			# remodel format of DNSKEY records
+			# inlines: 3600 IN DNSKEY 257 3 13 HX42sd3lD8CH5...
+			# outfile: TTL\n257 3 13 HX42sd3lD8CH5...\n257...
+			new_body = body.split (' ', 1) [0]
+			for line in body.split ('\n'):
+				new_body = new_body + '\n' + line.split (' IN DNSKEY ', 1) [1]
+			# save new_body to new zonefile -- but not in unsigned yet
 			zf = open ('/var/opendnssec/parenting/' + zone + '.new', 'w')
 			#TODO# Parse and reproduce
-			zf.write (body)
+			zf.write (new_body)
 			zf.close ()
 			os.rename ('/var/opendnssec/parenting/' + zone + '.new',
 			           '/var/opendnssec/parenting/' + zone + '.0signer')
