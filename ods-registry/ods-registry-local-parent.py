@@ -73,6 +73,6 @@ def update_keys (cnx, domain, keys):
 	msg = ''.join (dnskeys).strip ()
 	log_info ('Local "registry" update with keys', msg)
 	chan.basic_publish (exchange=exchange_name,
-			routing_key=domain,
+			routing_key=domain.to_text (),
 			body=msg)
 
