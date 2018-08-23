@@ -48,7 +48,7 @@ def dnssec_strip (zone):
 	signedzonefile = '/tmp/dnssec_strip.zone'  # we need a name...
 	presigzonefile = '/var/opendnssec/unsigned/' + zone + '.txt'
 	try:
-		_ = os.stat (signedzonefile)
+		_ = os.stat (presigzonefile)
 	except:
 		log_notice ('Skipping DNSSEC stripping: No zone file under Knot DNS management for ' + zone)
 		return 0
