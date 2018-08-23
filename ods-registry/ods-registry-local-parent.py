@@ -57,7 +57,7 @@ def disconnect (cnx):
 	# To end this program, unwind all instances and unregister our own
 	# callback to cb_uploaded_hint().
 	#
-	self.basic_cancel (uploaded_hints_tag)
+	chan.basic_cancel (uploaded_hints_tag)
 	for pex in parenting_exchange.values ():
 		pex.close ()
 	chan = None
@@ -72,7 +72,7 @@ def update_keys (cnx, domain, keys):
 	dnskeys = map (lambda k: '3600 IN DNSKEY ' + k.to_text (), keys)
 	msg = ''.join (dnskeys).strip ()
 	log_info ('Local "registry" update with keys', msg)
-	self.chan.basic_publish (exchange=exchange_name,
+	chan.basic_publish (exchange=exchange_name,
 			routing_key=domain,
 			body=msg)
 
