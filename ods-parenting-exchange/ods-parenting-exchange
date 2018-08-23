@@ -231,7 +231,7 @@ class ParentingExchange (object):
 	   names of NS records within the loaded zone.
 	"""
 
-	def __init__ (self, chan, zone_name):
+	def __init__ (self, chan, zone_name, has_booted=False):
 		"""Create a queue for the named zone, and bind a callback to
 		    events that call for handling as a parent or child.
 		"""
@@ -241,7 +241,7 @@ class ParentingExchange (object):
 		self.child_dnskeys = {}
 		self.dnskeys = None
 		self.consumer_tags = []
-		self.children_up2date = False
+		self.children_up2date = has_booted
 		self.setup_dnskeys ()
 		self.update_uploaded ()
 		self.setup_queue_and_callback ()
@@ -536,14 +536,16 @@ class ParentingExchange (object):
 # and then listen in on hints to look at an uploaded zone again.
 #
 
+parenting_exchange_has_booted = False
+
 def update_parenting_exchange (zone_name):
-	global parenting_exchange
+	global parenting_exchange, parenting_exchange_has_booted
 	if not zone_re.match (zone_name):
 		log_error ('Parenting Exchange does not support zone syntax for', zone_name)
 	elif parenting_exchange.has_key (zone_name):
 		parenting_exchange [zone_name].update_uploaded ()
 	else:
-		parenting_exchange [zone_name] = ParentingExchange (chan, zone_name)
+		parenting_exchange [zone_name] = ParentingExchange (chan, zone_name, has_booted=parenting_exchange_has_booted)
 
 
 #
@@ -609,6 +611,7 @@ for zone in os.listdir ('/var/opendnssec/uploaded'):
 for pex in parenting_exchange.values ():
 	pex.announce_dnskeys ()
 
+parenting_exchange_has_booted = True
 for pex in parenting_exchange.values ():
 	pex.enable_publication ()
 
