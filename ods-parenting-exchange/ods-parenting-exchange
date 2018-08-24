@@ -273,7 +273,7 @@ class ParentingExchange (object):
 		# 		queue=self.zone_name + '_zonekeys',
 		# 		routing_key=self.zone_name)
 		self.chan.basic_consume (self.cb_zone_queue,
-				queue=self.zone_name + '_zonekeys')
+				queue=rabbitdnssec.my_queue (self.zone_name + '_zonekeys'))
 
 	def close (self):
 		"""When the zone file is removed, the zone has vanished.
