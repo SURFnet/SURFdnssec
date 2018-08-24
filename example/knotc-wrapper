@@ -1,0 +1,23 @@
+#!/bin/bash
+#
+# knotc-wrapper -- Ensure getting transaction locks
+#
+# This is a premature script that can be used to ensure having unique
+# access to Knot's locking mechanism.  This can be useful when the desire
+# is to script transactions.  This is a short-term fix only.
+#
+# In the long term, we believe knotc should get a few flags added:
+#  - wait for a lock until it is free (exponentially backing off)
+#  - break out of a transaction upon first sign of failure
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+LOCKFILE="/tmp/knotc-wrapper.lock"
+WAITPERIOD=10800
+KNOTC=/usr/sbin/knotc.real
+
+flock -w "$WAITPERIOD" "$LOCKFILE" "$KNOTC" "$@"
+EXITVAL=$?
+
+exit $EXITVAL
