@@ -30,7 +30,7 @@ def connect ():
 	#
 	# Create the queueing infrastructure for the parent exchange.
 	#
-	creds = rabbitdnssec.my_credentials (ovr_username='uplink')
+	creds = rabbitdnssec.my_credentials (ovr_username='parenting')
 	cnxparm = rabbitdnssec.my_connectionparameters (creds)
 	intcnx = None
 	chan = None
@@ -71,8 +71,11 @@ def update_keys (cnx, domain, keys):
 	(intcnx,chan) = cnx
 	dnskeys = map (lambda k: '3600 IN DNSKEY ' + k.to_text (), keys)
 	msg = ''.join (dnskeys).strip ()
-	log_info ('Local "registry" update with zone', domain.to_text (), 'keys', msg)
+	domnodot = domain.to_text ()
+	if domnodot.endswith ('.'):
+		domnodot = domnodot [:-1]
+	log_info ('Local "registry" update with zone', domnodot, 'keys', msg)
 	chan.basic_publish (exchange=exchange_name,
-			routing_key=domain.to_text (),
+			routing_key=domnodot,
 			body=msg)
 
