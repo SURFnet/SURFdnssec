@@ -71,7 +71,7 @@ def update_keys (cnx, domain, keys):
 	(intcnx,chan) = cnx
 	dnskeys = map (lambda k: '3600 IN DNSKEY ' + k.to_text (), keys)
 	msg = ''.join (dnskeys).strip ()
-	log_info ('Local "registry" update with keys', msg)
+	log_info ('Local "registry" update with zone', domain.to_text (), 'keys', msg)
 	chan.basic_publish (exchange=exchange_name,
 			routing_key=domain.to_text (),
 			body=msg)
