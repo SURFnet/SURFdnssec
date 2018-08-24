@@ -412,7 +412,7 @@ def step_to_5dshold (zone, parent, prepkeys, prepage, nextkeys):
                 syslog.syslog (syslog.LOG_WARNING, 'Failed to wait DS TTL for TLD of ' + zone)
                 return
 	log_debug ('Judging based on TTL', prepkeys.ttl, 'plus preparation age', prepage, 'falls before now,', time.time ())
-	threshold_time = prepage + parent2dsttl [parent]
+	threshold_time = prepage + int (parent2dsttl [parent])
 	return time.time () > threshold_time
 	return False
 
