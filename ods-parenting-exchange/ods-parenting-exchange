@@ -454,6 +454,7 @@ class ParentingExchange (object):
 						absnm = nm.to_text ()
 					else:
 						absnm = nm.to_text () + '.' + self.zone_name
+					log_debug ('Adding child', absnm, 'for', self.zone_name)
 					new_ns [absnm] = absrr
 		old_ns = self.child_ns
 		self.child_ns = new_ns
@@ -520,9 +521,11 @@ class ParentingExchange (object):
 			if typ == 'DNSKEY':
 				log_info ('Got DNSKEY in', body, 'routed as', rkey, 'to', zone)
 				self.child_dnskeys [rkey] = body
-				if self.child_ns.has_key (zone):
-					log_debug ('Publishing DNKSEY as', zone)
+				if self.child_ns.has_key (rkey):
+					log_debug ('Publishing zone', zone,'added secure delegation for', rkey)
 					self.publish_unsigned ()  # Possibly deferred
+				else:
+					log_debug ('No delegation found for', rkey, 'in', zone + ', not publishing new version, got child NS for', self.child_ns.keys())
 		else:
 			# Information unrelated to us... is a routing error!
 			raise Exception ("ParentingExchange:cb_zone_queue() routing key " + rkey + " should not arrive at zone " + zone)
@@ -620,6 +623,7 @@ for pex in parenting_exchange.values ():
 	pex.announce_dnskeys ()
 
 parenting_exchange_has_booted = True
+log_info ('Parenting Exchange finished booting phase, going live')
 for pex in parenting_exchange.values ():
 	pex.enable_publication ()
 
