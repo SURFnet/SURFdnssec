@@ -258,13 +258,14 @@ class ParentingExchange (object):
 		   used to recognise traffic, so to the parenting
 		   exchange software this is barely noticeable.
 		"""
-		self.chan.queue_declare (queue=self.zone_name + '_zonekeys',
+		myqn = rabbitdnssec.my_queue (self.zone_name + '_zonekeys')
+		self.chan.queue_declare (queue=myqn,
 				durable=True,
 				exclusive=False,
 				auto_delete=False)  # Could auto_delete harm?
 		# Children's publications
 		self.chan.queue_bind (exchange=exchange_name,
-				queue=self.zone_name + '_zonekeys',
+				queue=myqn,
 				routing_key='#.*.' + self.zone_name)
 		# TODO???Bind??? to publications by our direct parent
 		# TODO???Bind??? to publications sent to us
@@ -286,7 +287,8 @@ class ParentingExchange (object):
 		self.chan.basic_publish (exchange=exchange_name,
 				routing_key=self.zone_name,
 				body='')
-		self.chan.queue_delete (queue=self.zone_name + '_zonekeys')
+		myqn = rabbitdnssec.my_queue (self.zone_name + '_zonekeys')
+		self.chan.queue_delete (queue=myqn)
 		self.is_closed = True
 
 	def announce_dnskeys (self):
@@ -513,12 +515,13 @@ class ParentingExchange (object):
 		elif rkey [-len (zone)-1:] == '.' + zone:
 			# Information from a child zone...
 			#  1. When DNKSEY, store it, publish if we also have an NS
-			log_info ('Got DNSKEY (I suspect) in', body, 'routed as', rkey)
 			(ttl,cls,typ,rrds) = parse_dnstext (body, rkey)
 			#DEBUG# print 'Done parsing'
 			if typ == 'DNSKEY':
+				log_info ('Got DNSKEY in', body, 'routed as', rkey, 'to', zone)
 				self.child_dnskeys [rkey] = body
 				if self.child_ns.has_key (zone):
+					log_debug ('Publishing DNKSEY as', zone)
 					self.publish_unsigned ()  # Possibly deferred
 		else:
 			# Information unrelated to us... is a routing error!
