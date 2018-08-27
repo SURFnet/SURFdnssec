@@ -132,7 +132,7 @@ while True:
 			#ZEAL# log_debug ('Done sending; committing transaction')
 			frame_method = chan.tx_commit ()
 			if type (frame_method.method) == pika.spec.Tx.CommitOk:
-				#ZEAL# log_debug ('AMQP Transaction Succes (Delivered to all Bound Queues)')
+				pass #ZEAL# log_debug ('AMQP Transaction Succes (Delivered to all Bound Queues)')
 			else:
 				log_critical ('AMQP Transaction Failure while sending', fn, '(signaling panic)')
 				panic = True
