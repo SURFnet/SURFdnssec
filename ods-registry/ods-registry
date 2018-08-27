@@ -177,7 +177,7 @@ def read_keysets_and_ages (zone):
 		except OSError, e:
 			sets [lvl] = rrset.RRset (zone, rdataclass.IN, rdatatype.DNSKEY)
 			ages [lvl] = 0
-			log_error ('Reading error:', e)
+			#ZEAL# log_debug ('Reading error:', e)
 	return (sets, ages)
 
 
@@ -224,12 +224,12 @@ def fetch_authoritative_dsset (authns, zone):
 def same_keysets (keys1, keys2):
 	# This should work... but dnspython is too shaky to trust
 	# that without wrapping for future maintenance...
-	log_debug ('Key set 1:', keys1 if len (keys1) > 0 else '(empty)')
-	log_debug ('Key set 2:', keys2 if len (keys2) > 0 else '(empty)')
+	#ZEAL# log_debug ('Key set 1:', keys1 if len (keys1) > 0 else '(empty)')
+	#ZEAL# log_debug ('Key set 2:', keys2 if len (keys2) > 0 else '(empty)')
 	if len (keys1) == 0 and len (keys2) == 0:
-		log_debug ('Equality bypassed: True')
+		#ZEAL# log_debug ('Equality bypassed: True')
 		return True
-	log_debug ('Equality:', keys1 == keys2)
+	#ZEAL# log_debug ('Equality:', keys1 == keys2)
 	return keys1 == keys2
 
 

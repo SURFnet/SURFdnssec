@@ -103,7 +103,7 @@ while True:
 			log_debug ('Removing', fn)
 			zonedata = ''
 		elif old.has_key (fn) and new [fn] == old [fn]:
-			log_debug ('No changes to', fn)
+			#ZEAL# log_debug ('No changes to', fn)
 			continue
 		else:
 			log_debug ('Sending', fn)
@@ -129,10 +129,10 @@ while True:
 				mandatory=True,
 				body=zonedata
 			)
-			log_debug ('Done sending; committing transaction')
+			#ZEAL# log_debug ('Done sending; committing transaction')
 			frame_method = chan.tx_commit ()
 			if type (frame_method.method) == pika.spec.Tx.CommitOk:
-				log_debug ('AMQP Transaction Succes (Delivered to all Bound Queues)')
+				#ZEAL# log_debug ('AMQP Transaction Succes (Delivered to all Bound Queues)')
 			else:
 				log_critical ('AMQP Transaction Failure while sending', fn, '(signaling panic)')
 				panic = True
