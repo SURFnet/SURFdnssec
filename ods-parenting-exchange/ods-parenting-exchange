@@ -527,9 +527,10 @@ class ParentingExchange (object):
 				else:
 					log_debug ('No delegation found for', rkey, 'in', zone + ', not publishing new version, got child NS for', self.child_ns.keys())
 			if typ is None:
-				log_info ('Got empty key set routed as', rkey, 'to', zone, 'cleaning up secure delegation')
-				del self.child_dnskeys [rkey]
-				self.publish_unsigned ()  # Possibly deferred
+				if self.child_dnskeys.has_key (rkey):
+					log_info ('Got empty key set routed as', rkey, 'to', zone, 'cleaning up secure delegation')
+					del self.child_dnskeys [rkey]
+					self.publish_unsigned ()  # Possibly deferred
 		else:
 			# Information unrelated to us... is a routing error!
 			raise Exception ("ParentingExchange:cb_zone_queue() routing key " + rkey + " should not arrive at zone " + zone)
