@@ -322,7 +322,7 @@ class ParentingExchange (object):
 					'3600 IN DNSKEY ' + k,
 						dnskeys)
 			dnskeys = ''.join (dnskeys).strip ()
-			log_debug ('Found for', zone + ':', dnskeys)
+			log_debug ('Found for', self.zone_name + ':', dnskeys)
 			#TODO# Announce by submission of the keys to any listeners
 		except:
 			dnskeys = ''
