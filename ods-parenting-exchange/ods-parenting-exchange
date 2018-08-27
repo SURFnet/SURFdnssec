@@ -655,6 +655,7 @@ uploaded_hints_tag = chan.basic_consume (cb_uploaded_hint,
 # belonging with the ParentingExchange instances.
 #
 
+log_info ('Parenting Exchange will start processing zone update hints')
 chan.start_consuming ()
 
 
