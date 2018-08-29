@@ -54,6 +54,7 @@ def dnssec_enable (zone):
 		rv2 = os.system ('knotc conf-set "zone[' + zone + '].dnssec-signing" on')
 	if rv0==0 and rv1==0 and rv2==0:
 		os.system ('knotc conf-commit')
+		os.system ('knotc zone-sign "' + zone + '"')
 	else:
 		if rv0==0:
 			os.system ('knotc conf-abort')

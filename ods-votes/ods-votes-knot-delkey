@@ -105,7 +105,9 @@ def dnssec_disable (zone):
 		# Note how silly: conf-get will return without error but unset
 		# will report an error when a feature was previously unknown!
 		rv1 = os.system ('knotc conf-unset "zone[' + zone + '].dnssec-signing"')
-		if rv1 != 0:
+		if rv1 == 0:
+			os.system ('knotc zone-sign "' + zone + '"')
+		else:
 			rv1 = 0
 	if rv0==0 and rv1==0:
 		rv2 = dnssec_strip (zone)
