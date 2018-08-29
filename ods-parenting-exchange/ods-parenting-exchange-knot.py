@@ -45,6 +45,8 @@ def zone_add (zone, knot_zone_file):
 	raise NotImplementedError ('Add zones in ods-zonerecv instead of in ods-parenting-exchange')
 	return
 	#TODO#HERE-OR-DURING-RECV#
+	global_lock = open ('/tmp/knotc-global-lock', 'w')
+	fcntl.lockf (global_lock, fcntl.LOCK_EX)
 	rv0 = os.system ('/usr/sbin/knotc conf-begin')
 	if rv0==0:
 		rv1 = os.system ('/usr/sbin/knotc conf-set zone.domain "' + zone + '"')
@@ -64,6 +66,7 @@ def zone_add (zone, knot_zone_file):
 	else:
 		os.system ('/usr/sbin/knotc conf-abort')
 		log_error ('Knot DNS could not add zone', zone)
+	global_lock.close ()
 
 # Remove a zone from processing by Knot DNS
 #
@@ -73,6 +76,8 @@ def zone_del (zone):
 	raise NotImplementedError ('Delete zones in ods-zonerecv instead of in ods-parenting-exchange')
 	return
 	#TODO#HERE-OR-DURING-RECV#
+	global_lock = open ('/tmp/knotc-global-lock', 'w')
+	fcntl.lockf (global_lock, fcntl.LOCK_EX)
 	rv0 = os.system ('/usr/sbin/knotc conf-begin')
 	if rv0 == 0:
 		rv1 = os.system ('/usr/sbin/knotc conf-unset zone.domain "' + zone + '"')
@@ -83,6 +88,7 @@ def zone_del (zone):
 	else:
 		os.system ('/usr/sbin/knotc conf-abort')
 		log_error ('Knot DNS could not delete zone', zone)
+	global_lock.close ()
 
 # Update a zone being processed by Knot DNS
 #

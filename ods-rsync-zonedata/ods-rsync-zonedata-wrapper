@@ -20,8 +20,9 @@ upload_dir = cfg ['upload_dir']
 trigger_fifo = cfg ['trigger_fifo']
 
 # /usr/bin/rsync --server --sender -vlogDtprCz . /home/portal/upload
-os.system ('/usr/bin/rsync --fake-super --server -vdc --delete . "' + upload_dir + '"')
-os.system ('cp "' + upload_dir + '/../keep_me/"* "' + upload_dir + '"')
+# os.system ('/usr/bin/rsync --fake-super --server -vdc --delete . "' + upload_dir + '"')
+os.system ('/usr/bin/rsync --fake-super --server -vdc . "' + upload_dir + '"')
+# os.system ('cp "' + upload_dir + '/../keep_me/"* "' + upload_dir + '"')
 
 try:
 	kick = os.open (trigger_fifo, os.O_WRONLY | os.O_NONBLOCK)

@@ -18,6 +18,7 @@
 
 import os
 import sys
+import fcntl
 
 from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
@@ -40,6 +41,8 @@ def dnssec_enable (zone):
 	# Note: This procedure is idempotent, key additions are neutral
 	# for already-existing zones.
 	#
+	global_lock = open ('/tmp/knotc-global-lock', 'w')
+	fcntl.lockf (global_lock, fcntl.LOCK_EX)
 	rv0 = os.system ('knotc conf-begin')
 	rv1 = 0
 	rv2 = 0
@@ -56,6 +59,7 @@ def dnssec_enable (zone):
 			os.system ('knotc conf-abort')
 		#TODO# Report that Knot DNS could not enable DNSSEC
 		log_error ('Knot DNS could not enable DNSSEC for', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
+	global_lock.close ()
 
 
 print 'CMD> /usr/sbin/keymgr -C /var/lib/knot/confdb ' + zone + ' import-pkcs11 ' + keyid + ' ksk=yes zsk=yes'

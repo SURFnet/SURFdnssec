@@ -33,6 +33,8 @@ def addzone (zone):
 	# a hint when we add a zone though, so it can append any child
 	# name server records as soon as we add the zone.
 	#
+	global_lock = open ('/tmp/knotc-global-lock', 'w')
+	fcntl.lockf (global_lock, fcntl.LOCK_EX)
 	rv0 = os.system ('/usr/sbin/knotc conf-begin')
 	rv1 = 0
 	rv2 = 0
@@ -71,6 +73,7 @@ def addzone (zone):
 		if rv0==0:
 			os.system ('/usr/sbin/knotc conf-abort')
 		log_error ('Knot DNS could not add zone', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
+	global_lock.close ()
 
 def delzone (zone):
 	# Remove a zone from Knot DNS, so it is no longer served.
@@ -85,6 +88,8 @@ def delzone (zone):
 	# we need, at minimum, the SOA record).  The parenting exchange
 	# needs no hint when we delete a zone.
 	#
+	global_lock = open ('/tmp/knotc-global-lock', 'w')
+	fcntl.lockf (global_lock, fcntl.LOCK_EX)
 	rv0 = os.system ('/usr/sbin/knotc conf-begin')
 	rv1 = 0
 	rv2 = 0
@@ -98,4 +103,5 @@ def delzone (zone):
 		if rv0==0:
 			os.system ('/usr/sbin/knotc conf-abort')
 		log_error ('Knot DNS could not delete zone', zone, '(%d,%d,%d)' % (rv0,rv1,rv2))
+	global_lock.close ()
 
