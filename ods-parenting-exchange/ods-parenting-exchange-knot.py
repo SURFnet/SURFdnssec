@@ -15,6 +15,8 @@
 
 import os
 
+import fcntl
+
 import rabbitdnssec
 from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
