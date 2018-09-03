@@ -29,6 +29,8 @@ def zonenames ():
 		if work [-1:] == '.':
 			work = work [:-1]
 		workset.add (work)
+	if zlist.close () is not None:
+		raise Exception ('Knot DNS not available for registry zone listing')
 	return workset
 
 #

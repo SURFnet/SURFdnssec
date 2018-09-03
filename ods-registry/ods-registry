@@ -599,7 +599,12 @@ if __name__ == '__main__':
 		# their connections are only cached for onepass () reuse.
 		while True:
 			# Make a pass over the work
-			onepass ()
+			try:
+				onepass ()
+			except Exception, e:
+				log_error ('Exception in pass:', e)
+				time.sleep (900)
+				continue
 			# Close any open registry connections
 			reg2close = []
 			for (regtld,(regmod,regcnx)) in registries.items ():
