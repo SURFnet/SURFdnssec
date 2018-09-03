@@ -24,7 +24,7 @@ zonelist_file_tmp = zonelist_file + '.writing.' + str (os.getpid ())
 import xml.etree.ElementTree as ET
 
 
-def addzone (zone):
+def addzone (zone, zonedata):
 	# No need to lock; this is the only process writing zonelist.xml
 	tree = ET.parse (zonelist_file)
 	zlist = tree.getroot ()

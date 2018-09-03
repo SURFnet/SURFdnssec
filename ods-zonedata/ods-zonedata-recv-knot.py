@@ -20,7 +20,7 @@ import rabbitdnssec
 from rabbitdnssec import log_debug, log_info, log_notice, log_warning, log_error, log_critical
 
 
-def addzone (zone):
+def addzone (zone, zonedata):
 	# Ensure that a zone is served by Knot DNS.
 	# Note: Key setup and DNSSEC signing is orthogonally setup;
 	# it defaults to being off, so an unsigned zone is delivered.
@@ -48,7 +48,7 @@ def addzone (zone):
 			knot_signed = '/var/opendnssec/signed/' + zone + '.txt'
 			shared = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP
 			fd = open (knot_signed, 'w')
-			fd.write (zone + '. 300 SOA ns1.TODO. dns-beheer.surfnet.nl. 0 300 300 300 300\n')
+			fd.write (zonedata)
 			fd.close ()
 			os.chmod (knot_signed, shared)
 			rv2 = os.system ('/usr/sbin/knotc conf-set "zone[' + zone + '].file" "' + knot_signed + '"')
@@ -56,13 +56,6 @@ def addzone (zone):
 			rv2 = 2
 	if rv0==0 and rv1==0 and rv2==0:
 		os.system ('/usr/sbin/knotc conf-commit')
-		kn = os.popen ('/usr/sbin/knotc', 'w')
-		kn.write ("zone-begin " + zone + "\n")
-		log_debug ("CMD> /usr/sbin/knotc zone-set " + zone + " @ 300 SOA ns1.TODO. dns-beheer.surfnet.nl. 0 300 300 300 300")
-		kn.write ("zone-set " + zone + " @ 300 SOA ns1.TODO. dns-beheer.surfnet.nl. 0 300 300 300 300\n")
-		kn.write ("zone-commit " + zone + "\n")
-		kn.write ("zone-flush " + zone + "\n")
-		kn.close ()
 		log_debug ('CMD> ods-keyops-knot-sharekey "' + zone + '"')
 		os.system ('ods-keyops-knot-sharekey "' + zone + '"')
 	else:

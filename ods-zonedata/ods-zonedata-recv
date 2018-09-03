@@ -110,7 +110,7 @@ def process_msg (chan, mth, props, body):
 			# have zonelist entry
 			if not have_old:
 				log_info ('Adding zonedata and zonelist entry for', zone)
-				backendmod.addzone (zone)
+				backendmod.addzone (zone, body)
 			#TODO# DEPRECATED -- generate composite zone by adding parenting data
 			#TODO# DEPRECATED -- os.system ('ods-zonedata-unsigned ' + zone)
 			#TODO# DEPRECATED -- instead send a message to the parenting exchange
