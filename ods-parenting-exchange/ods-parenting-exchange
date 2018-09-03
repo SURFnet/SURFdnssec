@@ -387,13 +387,7 @@ class ParentingExchange (object):
 		outfd = open (presig_path + '.prepublish', 'w')
 		outfd.write (zone_text)
 		outfd.close ()
-		have_zone = True
-		try:
-			signed_text = os.stat (signed_path)
-		except:
-			#MOVED#OUT# backendmod.zone_add (self.zone_name, sign_path)
-			have_zone = False
-			log_error ('Have no signed zone file in', signed_path)
+		have_zone = backendmod.have_zone (self.zone_name)
 		if have_zone and not remove:
 			backendmod.zone_update (self.zone_name, presig_path + '.prepublish', signed_path)
 			try:

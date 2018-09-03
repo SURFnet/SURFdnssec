@@ -39,3 +39,17 @@ def signer_hint (zone_name=''):
 			os.rename (sign_path + '.prepublish', sign_path)
 			signer_hint (zone_name=self.zone_name)
 
+
+#
+# Check if a zone is known
+#
+def zone_exists (zone_name=''):
+	signed_path = signed_file (zone_name)
+	try:
+		signed_text = os.stat (signed_path)
+		return True
+	except:
+		#MOVED#OUT# backendmod.zone_add (self.zone_name, sign_path)
+		log_error ('Have no signed zone file in', signed_path)
+		return False
+

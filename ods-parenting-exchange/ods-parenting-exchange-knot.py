@@ -106,3 +106,14 @@ def zone_update (zone, new_zone_file, knot_zone_file):
 	if exitval != 0:
 		log_error ('Knot DNS has not received/processed complete zone file update for', zone)
 
+
+#
+# Check if a zone is known
+#
+def zone_exists (zone_name=''):
+	if os.system ("knotc conf-get zone['" + zone_name + "']") != 0:
+		log_error ('Have no zone for ', zone_name)
+		return False
+	else:
+		return True
+
