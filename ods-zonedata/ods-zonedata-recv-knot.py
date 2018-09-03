@@ -44,29 +44,18 @@ def addzone (zone):
 		rv1 =  os.system ('/usr/sbin/knotc conf-get "zone[' + zone + ']"')
 	if rv0==0 and rv1==0:
 		try:
-			knot_presig = '/var/opendnssec/signed/' + zone + '.txt'
 			knot_signed = '/var/opendnssec/signed/' + zone + '.txt'
-			shared = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP
-			log_debug ('Writing to', knot_presig)
-			fd = open (knot_presig, 'w')
-			fd.write (zone + '. 300 IN SOA ns1.' + zone + '. dns-beheer.' + zone + '. 0 300 300 300 300\n')
-			fd.write (zone + '. 300 IN TXT "TODO" "Need actual content"\n')
-			fd.write (zone + '. 300 IN NS ns1.todo.\n')
-			fd.write (zone + '. 300 IN NS ns2.todo.\n')
-			fd.close ()
-			os.chmod (knot_presig, shared)
-			fd = open (knot_signed, 'w')
-			fd.write (zone + '. 300 IN SOA ns1.' + zone + '. dns-beheer.' + zone + '. 0 300 300 300 300\n')
-			fd.write (zone + '. 300 IN TXT "TODO" "Need actual content"\n')
-			fd.write (zone + '. 300 IN NS ns1.todo.\n')
-			fd.write (zone + '. 300 IN NS ns2.todo.\n')
-			fd.close ()
-			os.chmod (knot_signed, shared)
 			rv2 = os.system ('/usr/sbin/knotc conf-set "zone[' + zone + '].file" "' + knot_signed + '"')
 		except:
 			rv2 = 2
 	if rv0==0 and rv1==0 and rv2==0:
 		os.system ('/usr/sbin/knotc conf-commit')
+		kn = os.popen ('/usr/sbin/knotc', 'w')
+		kn.write ("zone-begin " + zone + "\n")
+		log_debug ("CMD> /usr/sbin/knotc zone-set " + zone + " @ 300 SOA ns1.TODO. dns-beheer.surfnet.nl. 0 300 300 300 300")
+		kn.write ("zone-set " + zone + " @ 300 SOA ns1.TODO. dns-beheer.surfnet.nl. 0 300 300 300 300\n")
+		kn.write ("zone-commit " + zone + "\n")
+		kn.close ()
 		log_debug ('CMD> ods-keyops-knot-sharekey "' + zone + '"')
 		os.system ('ods-keyops-knot-sharekey "' + zone + '"')
 	else:

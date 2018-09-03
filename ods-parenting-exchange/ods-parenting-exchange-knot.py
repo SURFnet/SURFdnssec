@@ -93,10 +93,12 @@ def zone_del (zone):
 # Update a zone being processed by Knot DNS
 #
 def zone_update (zone, new_zone_file, knot_zone_file):
-	log_debug ('CMD> ldns-zonediff -k -o "' + zone + '" "' + knot_zone_file + '" "' + new_zone_file + '" | /usr/sbin/knotc')
-	os.system ('ldns-zonediff -k -o "' + zone + '" "' + knot_zone_file + '" "' + new_zone_file + '" | /usr/sbin/knotc')
-	# ignore previous result, but check the result
 	tmp_zone_file = '/tmp/' + zone
+	log_debug ('CMD> /usr/sbin/knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\' > "' + tmp_zone_file + '"')
+	os.system ('/usr/sbin/knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\' > "' + tmp_zone_file + '"')
+	log_debug ('CMD> ldns-zonediff -k -o "' + zone + '" "' + tmp_zone_file + '" "' + new_zone_file + '" | /usr/sbin/knotc')
+	os.system ('ldns-zonediff -k -o "' + zone + '" "' + tmp_zone_file + '" "' + new_zone_file + '" | /usr/sbin/knotc')
+	# ignore previous result, but check the result
 	log_debug ('CMD> /usr/sbin/knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\' > "' + tmp_zone_file + '"')
 	os.system ('/usr/sbin/knotc zone-read "' + zone + '" | sed \'s/^\[[^]]*\] *//\' > "' + tmp_zone_file + '"')
 	log_debug ('CMD> ldns-zonediff -o "' + zone + '" "' + tmp_zone_file + '" "' + new_zone_file + '"')
