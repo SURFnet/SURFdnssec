@@ -46,6 +46,11 @@ def addzone (zone):
 	if rv0==0 and rv1==0:
 		try:
 			knot_signed = '/var/opendnssec/signed/' + zone + '.txt'
+			shared = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP
+			fd = open (knot_signed, 'w')
+			fd.write (zone + '. 300 SOA ns1.TODO. dns-beheer.surfnet.nl. 0 300 300 300 300\n')
+			fd.close ()
+			os.chmod (knot_signed, shared)
 			rv2 = os.system ('/usr/sbin/knotc conf-set "zone[' + zone + '].file" "' + knot_signed + '"')
 		except:
 			rv2 = 2
