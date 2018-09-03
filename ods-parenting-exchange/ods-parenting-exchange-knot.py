@@ -113,7 +113,7 @@ def zone_update (zone, new_zone_file, knot_zone_file):
 # Check if a zone is known
 #
 def zone_exists (zone_name=''):
-	if os.system ("knotc conf-get zone['" + zone_name + "']") != 0:
+	if os.system ("knotc zone-read '" + zone_name + "' > /dev/null") != 0:
 		log_error ('Have no zone for ', zone_name)
 		return False
 	else:
