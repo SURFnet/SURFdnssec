@@ -56,6 +56,7 @@ def addzone (zone):
 		log_debug ("CMD> /usr/sbin/knotc zone-set " + zone + " @ 300 SOA ns1.TODO. dns-beheer.surfnet.nl. 0 300 300 300 300")
 		kn.write ("zone-set " + zone + " @ 300 SOA ns1.TODO. dns-beheer.surfnet.nl. 0 300 300 300 300\n")
 		kn.write ("zone-commit " + zone + "\n")
+		kn.write ("zone-flush " + zone + "\n")
 		kn.close ()
 		log_debug ('CMD> ods-keyops-knot-sharekey "' + zone + '"')
 		os.system ('ods-keyops-knot-sharekey "' + zone + '"')
