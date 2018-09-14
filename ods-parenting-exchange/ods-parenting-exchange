@@ -514,8 +514,8 @@ class ParentingExchange (object):
 			#DEBUG# print 'Done parsing'
 			if typ == 'DNSKEY':
 				log_info ('Got DNSKEY in', body, 'routed as', rkey, 'to', zone)
-				self.child_dnskeys [rkey] = body
 				if self.child_ns.has_key (rkey):
+					self.child_dnskeys [rkey] = body
 					log_debug ('Publishing zone', zone,'added secure delegation for', rkey)
 					self.publish_unsigned ()  # Possibly deferred
 				else:
