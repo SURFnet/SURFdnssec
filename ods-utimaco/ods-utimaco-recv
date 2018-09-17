@@ -47,7 +47,7 @@ def process_msg (chan, mth, props, body):
 	who = props.cluster_id or 'signer_cluster'
 	actual_keys = set ()
 	try:
-		if os.system ('p11tool2 LoginUser=`cat "' + pkcs11_pinfile + '"` BackupExternalKeys="' + pkcs11_localfile + '"') != 0:
+		if os.system ('p11tool2 Force=1 LoginUser=`cat "' + pkcs11_pinfile + '"` BackupExternalKeys="' + pkcs11_localfile + '"') != 0:
 			log_critical ('Failure during check of local keys')
 			raise Exception ()
 		actual_keys = set (open (pkcs11_localfile).read ().split ('\n') [1:]) - set ([''])
