@@ -46,3 +46,4 @@ for zone in zones:
 		log_info ('Requesting zone', zone, 'removal of key pair', kid)
 		print 'votes> DELKEY %s %s' % (zone,kid)
 
+	fd.close ()

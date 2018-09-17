@@ -5,6 +5,14 @@
 # This program takes delivery of an Utimaco External Keys dump file over
 # AMQP, and integrates them through external key recovery.
 #
+# Due to the slowness of the merging procedure, which Utimaco seems to
+# handle with quadratical complexity, we exploit the line-at-a-time
+# structure of the backup files, plus the fact that the two HSM instances
+# represent the same keys with the same line format.  This enables us to
+# merge in only added keys, which is a much faster operation.  It is still
+# assumed that full backups are received over AMQP, because that is the
+# simplest operationally.
+#
 # From: Rick van Rein <rick@openfortress.nl>
 
 
@@ -13,6 +21,7 @@ import sys
 import time
 import socket
 import ssl
+import difflib
 
 import pika
 
@@ -24,6 +33,7 @@ pkcs11_routing_keys = [ 'pkcs11_backup', 'pkcs11_extend' ]
 
 cfg = rabbitdnssec.my_config ('ods-utimaco')
 pkcs11_restorefile = cfg ['pkcs11_restorefile']
+pkcs11_localfile    = cfg ['pkcs11_localfile']
 username           = cfg ['username']
 
 pkcs11_pinfile = rabbitdnssec.pkcs11_pinfile ()
@@ -35,10 +45,23 @@ signer_machine = socket.gethostname ().split ('.') [0]
 
 def process_msg (chan, mth, props, body):
 	who = props.cluster_id or 'signer_cluster'
+	actual_keys = set ()
+	try:
+		if os.system ('p11tool2 LoginUser=`cat "' + pkcs11_pinfile + '"` BackupExternalKeys="' + pkcs11_localfile + '"') != 0:
+			log_critical ('Failure during check of local keys')
+			raise Exception ()
+		actual_keys = set (open (pkcs11_localfile).read ().split ('\n') [1:]) - set ([''])
+	except:
+		actual_keys = set ()
+	(target_head,target_tail) = body.split ('\n', 1)
+	target_keys = set (target_tail.split ('\n')) - set ([''])
 	outfh = open (pkcs11_restorefile, 'w')
-	outfh.write (body)
+	outfh.write (target_head + '\n')
+	for k in target_keys.difference (actual_keys):
+		outfh.write (k)
+		outfh.write ('\n')
 	outfh.close ()
-	if os.system ('p11tool2 LoginUser=`cat ' + pkcs11_pinfile + '` RestoreExternalKeys=' + pkcs11_restorefile) != 0:
+	if os.system ('p11tool2 LoginUser=`cat "' + pkcs11_pinfile + '"` RestoreExternalKeys="' + pkcs11_restorefile + '"') != 0:
 		log_error ('Failure during restore of external keys from', who)
 		chan.basic_nack (delivery_tag=mth.delivery_tag, requeue=False)
 		chan.tx_rollback ()

@@ -436,6 +436,7 @@ rescf = os.popen ('echo nameserver 127.0.0.1', 'r')
 local_resolver = dns.resolver.Resolver (configure=False)
 local_resolver.read_resolv_conf (rescf)
 local_resolver.use_edns (0, 0, 4096)
+rescf.close ()
 
 
 #
