@@ -1,11 +1,11 @@
 #!/usr/bin/env python2
 #
-# stargate_registry_shell.py
 # Perform DS changes as a Stargate reseller using their API
 #
-# BE CAREFUL -- this is rough initial code -- and UNTESTED CODE
-#
 # Contact: Roland van Rijswijk-Deij <roland.vanrijswijk@surfnet.nl>
+#
+# Stargate currently supports DNSSEC for the following TLDs:
+# .com, .net, .org
 
 
 import os
@@ -293,11 +293,21 @@ def update_dsset(_sox, domain, new_dsset):
 
 # Update the DNSKEY set for a domain
 def update_keys(_sox, zone, newkeys):
+	zonestr = zone.to_text ()
+
+	if zonestr.endswith('.'):
+		zonestr = zonestr[:-1]
+
+	# TEST KLUDGE # FIXME #
+	if zonestr != 'stampdns.org':
+		log_debug('Not the test domain stampdns.org, skipping')
+		return
+
 	new_ds_set = []
 	for key in newkeys:
 		if key.flags & 0x0001:
-			new_ds_set.append(dnssec.make_ds(domain + '.', key, 'SHA256'))
-	stargate_registry_shell.update_dsset(_sox, domain, new_ds_set)
+			new_ds_set.append(dnssec.make_ds(zonestr + '.', key, 'SHA256'))
+	update_dsset(_sox, zonestr, new_ds_set)
 
 # Facilitation of main stream connection and disconnection as a generic pattern (moot for StarGate)
 def connect ():
@@ -315,7 +325,7 @@ def main():
 		print_domain_status(domain)
 
 # Open syslog
-openlog ('stargate_registry_shell', LOG_PID | (LOG_PERROR if sys.stderr.isatty () else 0), LOG_USER)
+openlog ('ods-registry-stargate', LOG_PID | (LOG_PERROR if sys.stderr.isatty () else 0), LOG_USER)
 
 # Run main entry point when invoked from the command-line
 if __name__ == '__main__':
