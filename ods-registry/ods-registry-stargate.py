@@ -301,11 +301,6 @@ def update_keys(_sox, zone, newkeys):
 	if zonestr.endswith('.'):
 		zonestr = zonestr[:-1]
 
-	# TEST KLUDGE # FIXME #
-	if zonestr != 'stampdns.org':
-		log_debug('Not the test domain stampdns.org, skipping')
-		return
-
 	new_ds_set = []
 	for key in newkeys:
 		if key.flags & 0x0001:
