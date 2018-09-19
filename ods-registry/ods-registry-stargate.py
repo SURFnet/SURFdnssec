@@ -19,6 +19,8 @@ import dns.rdatatype
 import dns.rdataclass
 import dns.rdtypes.ANY.DS
 
+from dns import dnssec
+
 from syslog import *
 
 import rabbitdnssec
