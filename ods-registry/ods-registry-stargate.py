@@ -219,6 +219,9 @@ def get_no_of_pending_dnssec_actions(orderid):
 		return -1
 	elif 'recsindb' in json_data:
 		return int(json_data['recsindb'])
+	elif json_data.get('status', None) == 'ERROR' and json_data.get('message', None) == 'No record found':
+		syslog(LOG_INFO, 'No pending DNSSEC actions, proceeding')
+		return 0
 	else:
 		syslog(LOG_ERR, 'Unexpected JSON data returned from search for pending actions ({0})'.format(json_data))
 		return -1
@@ -278,12 +281,10 @@ def update_dsset(_sox, domain, new_dsset):
 	# We need the Stargate order number to be able to make changes, check
 	# if it is present in the JSON data returned by the API
 	if 'orderid' not in dominfo:
-		syslog(LOG_ERR, 'Stargate did not return an order number for {0}, this is needed to update the DS set'.format(domain))
 		raise Exception('Stargate did not return an order number for {0}, this is needed to update the DS set'.format(domain))
 
 	if get_no_of_pending_dnssec_actions(dominfo['orderid']) != 0:
-		syslog(LOG_INFO, 'There are pending DNSSEC actions for {0}, bailing out'.format(domain))
-		return
+		raise Exception('It seems there are pending DNSSEC actions for {0}, bailing out'.format(domain))
 
 	# Perform the required updates. Attempt to remove DS-es first, since
 	# no DS is better than adding a broken DS.
