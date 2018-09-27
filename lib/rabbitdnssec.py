@@ -89,41 +89,41 @@ pkcs11_curve_name	= appcfg ['pkcs11'] ['curve_name']
 #
 def log_debug (msg, *args):
 	for a in args:
-		msg = msg + ' ' + unicode (a)
+		msg = msg + ' ' + unicode (str (a), 'utf-8')
 	msg = msg.encode ('ascii', 'replace')
 	syslog.syslog (syslog.LOG_DEBUG, msg)
 
 def log_info (msg, *args):
 	for a in args:
-		msg = msg + ' ' + unicode (a)
+		msg = msg + ' ' + unicode (str (a), 'utf-8')
 	# msg = msg % tuple (map (str, args))
 	msg = msg.encode ('ascii', 'replace')
 	syslog.syslog (syslog.LOG_INFO, msg)
 
 def log_notice (msg, *args):
 	for a in args:
-		msg = msg + ' ' + unicode (a)
+		msg = msg + ' ' + unicode (str (a), 'utf-8')
 	# msg = msg % tuple (map (str, args))
 	msg = msg.encode ('ascii', 'replace')
 	syslog.syslog (syslog.LOG_NOTICE, msg)
 
 def log_warning (msg, *args):
 	for a in args:
-		msg = msg + ' ' + unicode (a)
+		msg = msg + ' ' + unicode (str (a), 'utf-8')
 	# msg = msg % tuple (map (str, args))
 	msg = msg.encode ('ascii', 'replace')
 	syslog.syslog (syslog.LOG_WARNING, msg)
 
 def log_error (msg, *args):
 	for a in args:
-		msg = msg + ' ' + unicode (a)
+		msg = msg + ' ' + unicode (str (a), 'utf-8')
 	# msg = msg % tuple (map (str, args))
 	msg = msg.encode ('ascii', 'replace')
 	syslog.syslog (syslog.LOG_ERR, msg)
 
 def log_critical (msg, *args):
 	for a in args:
-		msg = msg + ' ' + unicode (a)
+		msg = msg + ' ' + unicode (str (a), 'utf-8')
 	# msg = msg % tuple (map (str, args))
 	msg = msg.encode ('ascii', 'replace')
 	syslog.syslog (syslog.LOG_CRIT, msg)
