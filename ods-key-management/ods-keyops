@@ -69,6 +69,7 @@ with rabbitdnssec.amqp_client_channel (
 			log_info ('Subcommand: ' +
 				sys.argv [0] + '-' + backend + '-addkey '
 				+ ' '.join (add_zones) + '\n')
+			output = None
 			try:
 				output = subprocess.Popen (
 					[sys.argv [0]+'-'+backend+'-addkey']
@@ -79,10 +80,14 @@ with rabbitdnssec.amqp_client_channel (
 						votes.append (outln [7:].strip ())
 			except subprocess.CalledProcessError:
 				success = False
+			finally:
+				if output is not None:
+					output.close ()
 		if success and len (del_zones) > 0:
 			log_info ('Subcommand: '
 				+ sys.argv [0] + '-' + backend + '-delkey '
 				+ ' '.join (del_zones) + '\n')
+			output = None
 			try:
 				output = subprocess.Popen (
 					[sys.argv[0]+'-'+backend+'-delkey']
@@ -93,6 +98,9 @@ with rabbitdnssec.amqp_client_channel (
 						votes.append (outln [7:].strip ())
 			except subprocess.CalledProcessError:
 				success = False
+			finally:
+				if output is not None
+					output.close ()
 		if success and len (votes) > 0:
 			for vote in votes:
 				chan.basic_publish (
