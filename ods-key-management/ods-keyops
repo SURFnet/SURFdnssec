@@ -99,7 +99,7 @@ with rabbitdnssec.amqp_client_channel (
 			except subprocess.CalledProcessError:
 				success = False
 			finally:
-				if output is not None
+				if output is not None:
 					output.close ()
 		if success and len (votes) > 0:
 			for vote in votes:
