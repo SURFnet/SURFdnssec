@@ -82,7 +82,7 @@ with rabbitdnssec.amqp_client_channel (
 				success = False
 			finally:
 				if output is not None:
-					output.close ()
+					success = (output.wait () == 0)
 		if success and len (del_zones) > 0:
 			log_info ('Subcommand: '
 				+ sys.argv [0] + '-' + backend + '-delkey '
@@ -100,7 +100,7 @@ with rabbitdnssec.amqp_client_channel (
 				success = False
 			finally:
 				if output is not None:
-					output.close ()
+					success = (output.wait () == 0)
 		if success and len (votes) > 0:
 			for vote in votes:
 				chan.basic_publish (
