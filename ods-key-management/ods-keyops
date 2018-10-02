@@ -69,38 +69,42 @@ with rabbitdnssec.amqp_client_channel (
 			log_info ('Subcommand: ' +
 				sys.argv [0] + '-' + backend + '-addkey '
 				+ ' '.join (add_zones) + '\n')
-			output = None
+			pipe = None
 			try:
-				output = subprocess.Popen (
+				pipe = subprocess.Popen (
 					[sys.argv [0]+'-'+backend+'-addkey']
 						+ add_zones,
-					stdout=subprocess.PIPE).stdout
+					stdout=subprocess.PIPE)
+				output = pipe.stdout
 				for outln in output.readlines ():
 					if outln [:7] == 'votes> ':
 						votes.append (outln [7:].strip ())
+				output.close ()
 			except subprocess.CalledProcessError:
 				success = False
 			finally:
-				if output is not None:
-					success = (output.wait () == 0)
+				if pipe is not None:
+					success = (pipe.wait () == 0)
 		if success and len (del_zones) > 0:
 			log_info ('Subcommand: '
 				+ sys.argv [0] + '-' + backend + '-delkey '
 				+ ' '.join (del_zones) + '\n')
-			output = None
+			pipe = None
 			try:
-				output = subprocess.Popen (
+				pipe = subprocess.Popen (
 					[sys.argv[0]+'-'+backend+'-delkey']
 						+ del_zones,
-					stdout=subprocess.PIPE).stdout
+					stdout=subprocess.PIPE)
+				output = pipe.stdout
 				for outln in output.readlines ():
 					if outln [:7] == 'votes> ':
 						votes.append (outln [7:].strip ())
+				output.close ()
 			except subprocess.CalledProcessError:
 				success = False
 			finally:
-				if output is not None:
-					success = (output.wait () == 0)
+				if pipe is not None:
+					success = (pipe.wait () == 0)
 		if success and len (votes) > 0:
 			for vote in votes:
 				chan.basic_publish (
