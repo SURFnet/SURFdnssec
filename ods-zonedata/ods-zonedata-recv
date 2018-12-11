@@ -78,7 +78,7 @@ def process_msg (chan, mth, props, body):
 				# log_debug ('Trying under $ORIGIN assumption')
 				zdnew = dns.zone.from_text (body, origin=None)
 				# log_debug ('Did not fail on $ORIGIN assumption')
-				zone = zdnew.origin.to_text (omit_final_dot=True)
+				zone = zdnew.origin.to_text (omit_final_dot=True).lower ()
 				# log_debug ('Found $ORIGIN to be', zone)
 			except dns.zone.UnknownOrigin:
 				# Fallback to the subject/filename as zone name
