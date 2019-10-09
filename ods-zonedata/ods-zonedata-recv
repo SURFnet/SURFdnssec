@@ -61,9 +61,9 @@ def process_msg (chan, mth, props, body):
 	try:
 		# log_debug ('Fetching subject from', props.headers)
 		zone = props.headers ['subject'].lower ()
-		# log_debug ('Fetched  subject', zone)
+		# log_debug ('Fetched  subject', zone.encode ('ascii', 'replace'))
 		if body == '':
-			log_info ('Removing zonedata and zonelist entry for', zone)
+			log_info ('Removing zonedata and zonelist entry for', zone.encode ('ascii', 'replace'))
 			# remove zonelist entry
 			backendmod.delzone (zone)
 			#TODO# DEPRECATED -- # stop signing the zone
@@ -72,19 +72,19 @@ def process_msg (chan, mth, props, body):
 			try_unlink ('/var/opendnssec/unsigned/' + zone + '.txt')
 			try_unlink ('/var/opendnssec/uploaded/' + zone + '.txt')
 		else:
-			log_debug ('Parsing', len (body), 'bytes for', zone)
+			log_debug ('Parsing', len (body), 'bytes for', zone.encode ('ascii', 'replace'))
 			try:
 				# Let's give way to an $ORIGIN -- if one exists
 				# log_debug ('Trying under $ORIGIN assumption')
 				zdnew = dns.zone.from_text (body, origin=None)
 				# log_debug ('Did not fail on $ORIGIN assumption')
 				zone = zdnew.origin.to_text (omit_final_dot=True).lower ()
-				# log_debug ('Found $ORIGIN to be', zone)
+				# log_debug ('Found $ORIGIN to be', zone.encode ('ascii', 'replace'))
 			except dns.zone.UnknownOrigin:
 				# Fallback to the subject/filename as zone name
-				# log_debug ('Trying with $ORIGIN set to', zone)
+				# log_debug ('Trying with $ORIGIN set to', zone.encode ('ascii', 'replace'))
 				zdnew = dns.zone.from_text (body, origin=zone)
-				# log_debug ('Did not fail with $ORIGIN set to', zone)
+				# log_debug ('Did not fail with $ORIGIN set to', zone.encode ('ascii', 'replace'))
 			# except NoSOA --> missing SOA record (caught/reported below)
 			# except NoNS  --> missing NS records (caught/reported below)
 			if zone_re.match (zone) is None:
@@ -92,10 +92,10 @@ def process_msg (chan, mth, props, body):
 			try:
 				have_old = True
 				zdold = dns.zone.from_file ('/var/opendnssec/uploaded/' + zone + '.txt', origin=zone, allow_include=False)
-				# log_debug ('Loaded old version of', zone)
+				# log_debug ('Loaded old version of', zone.encode ('ascii', 'replace'))
 				soa_old = soa_serial (zdold, zone)
 				soa_new = soa_serial (zdnew, zone)
-				log_debug ('Request to migrate SOA serial for', zone, 'from', soa_old, 'to', soa_new)
+				log_debug ('Request to migrate SOA serial for', zone.encode ('ascii', 'replace'), 'from', soa_old, 'to', soa_new)
 				if soa_old >= soa_new:
 					# log_warning ('SOA serial ' + str (soa_new) + ' ignored; already got ' + str (soa_old))
 					raise Exception ('SOA serial ' + str (soa_new) + ' ignored; already got ' + str (soa_old))
@@ -109,13 +109,13 @@ def process_msg (chan, mth, props, body):
 			           '/var/opendnssec/uploaded/' + zone + '.txt')
 			# have zonelist entry
 			if not have_old:
-				log_info ('Adding zonedata and zonelist entry for', zone)
-				backendmod.addzone (zone, zdnew.to_text (relativize=False))
+				log_info ('Adding zonedata and zonelist entry for', zone.encode ('ascii', 'replace'))
+				backendmod.addzone (zone, body)
 			#TODO# DEPRECATED -- generate composite zone by adding parenting data
 			#TODO# DEPRECATED -- os.system ('ods-zonedata-unsigned ' + zone)
 			#TODO# DEPRECATED -- instead send a message to the parenting exchange
 			# generate composite zone by hinting the parenting exchange
-		log_debug ('Hinting parenting exchange about', zone)
+		log_debug ('Hinting parenting exchange about', zone.encode ('ascii', 'replace'))
 		chan.basic_publish (exchange=parenting_exchange_name,
 					routing_key='',
 					body=zone)
@@ -123,19 +123,19 @@ def process_msg (chan, mth, props, body):
 		if backend == 'opendnssec':
 			os.system ('./ods-zonedata-signconf ' + zone)
 	except dns.zone.NoSOA:
-		log_error ('No SOA records found in', zone)
+		log_error ('No SOA records found in', zone.encode ('ascii', 'replace'))
 	except dns.zone.NoNS:
-		log_error ('No NS records found in', zone)
+		log_error ('No NS records found in', zone.encode ('ascii', 'replace'))
 	except Exception, e:
-		log_error ('Exception:', e, 'for zone', zone)
+		log_error ('Exception:', e, 'for zone', zone.encode ('ascii', 'replace'))
 		ok = False
 	if not ok:
-		log_error ('Failure while processing zonedata for ' + zone)
+		log_error ('Failure while processing zonedata for ' + zone.encode ('ascii', 'replace'))
 		chan.basic_nack (delivery_tag=mth.delivery_tag, requeue=False)
 		#TODO#STILL_WANT_TO_CONTINUE# chan.tx_rollback ()
 		chan.tx_commit ()
 	else:
-		log_info ('Successfully processed zonedata update for ' + zone)
+		log_info ('Successfully processed zonedata update for ' + zone.encode ('ascii', 'replace'))
 		chan.basic_ack  (delivery_tag=mth.delivery_tag)
 		chan.tx_commit ()
 		#TODO# signal parent/child system about updated zonedata
