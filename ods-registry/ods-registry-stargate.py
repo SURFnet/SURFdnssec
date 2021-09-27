@@ -206,8 +206,8 @@ def get_no_of_pending_dnssec_actions(orderid):
 	parameters = [('order-id', orderid)]
 	parameters += [('no-of-records', 50)]
 	parameters += [('page-no', 1)]
-	parameters += [('action-type1', 'AddDNSSEC')]
-	parameters += [('action-type2', 'DelDNSSEC')]
+	parameters += [('action-type', 'AddDNSSEC')]
+	parameters += [('action-type', 'DelDNSSEC')]
 
 	cmd_url = build_sg_get_url(sg_api_baseurl_actions, 'search-current.json', parameters)
 
